@@ -18,6 +18,11 @@ for any later page, so older matches cannot be reached. Rust pages for real:
   channels are the user's, less those `FilterPostsByChannelPermissions` drops (checked before the query), hashtags
   match case-insensitively (Postgres `upper()` on both sides, Go's `strings.ToUpper`), burn-on-read posts are left
   out. The reply count is computed only for the page's rows. `tests/search_paging.rs` checks the pages.
+- The matches always come through the full-text indexes (Mattermost's `idx_posts_message_txt`,
+  `idx_posts_hashtags_txt`) in a `MATERIALIZED` CTE, then are sorted: every page costs about the same, bound by the
+  number of matches. The planner left to itself may walk `CreateAt` from the newest post instead, testing each post,
+  which is quick for a word all over the recent posts and a scan of the whole table for a word only old posts have
+  (bench: a word in 30 000 old posts, page 0 in 900 ms that way, 30 ms through the index).
 - The answer keeps Go's shape (`order`, `posts`, `matches` when present; no `has_next`).
 
 The clients page unchanged: the web app (`WEBAPP_SEARCH_PER_PAGE` = 20) asks `page + 1` while a page is not empty,

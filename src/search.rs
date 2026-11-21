@@ -494,16 +494,22 @@ impl App {
         if groups.is_empty() {
             return Ok(list);
         }
+        // The matches always come through the full-text index (idx_posts_message_txt, idx_posts_hashtags_txt), then
+        // are sorted: a cost bound by the number of matches on every page. Left to itself the planner may instead walk
+        // CreateAt from the newest post computing each one's tsvector until a page of matches turns up, quick for a
+        // word all over the recent posts but a scan of the whole table for one whose matches are all old (a word in
+        // 30 000 old posts of the bench: 900 ms against 30 ms). MATERIALIZED keeps the two apart.
         // The reply count only for the page's rows.
         let sql = format!(
-            "SELECT {}, (SELECT COUNT(*) FROM Posts WHERE Posts.RootId = (CASE WHEN q2.RootId = '' THEN q2.Id ELSE q2.RootId END) AND Posts.DeleteAt = 0) AS replycount
-             FROM (SELECT * FROM Posts q2
-                   WHERE q2.DeleteAt = 0 AND q2.Type NOT LIKE 'system_%' AND q2.Type != 'card' AND q2.Type != '{}' AND ({})
-                   ORDER BY q2.CreateAt DESC, q2.Id LIMIT {limit} OFFSET {skip}) q2
+            "WITH m AS MATERIALIZED (
+                 SELECT q2.Id, q2.CreateAt FROM Posts q2
+                 WHERE q2.DeleteAt = 0 AND q2.Type NOT LIKE 'system_%' AND q2.Type != 'card' AND q2.Type != '{}' AND ({}))
+             SELECT {}, (SELECT COUNT(*) FROM Posts WHERE Posts.RootId = (CASE WHEN q2.RootId = '' THEN q2.Id ELSE q2.RootId END) AND Posts.DeleteAt = 0) AS replycount
+             FROM Posts q2 JOIN (SELECT Id FROM m ORDER BY CreateAt DESC, Id LIMIT {limit} OFFSET {skip}) pg ON q2.Id = pg.Id
              ORDER BY q2.CreateAt DESC, q2.Id",
-            db::cols::<Post>("q2"),
             crate::model::post_kind::BURN_ON_READ,
-            groups.join(" OR ")
+            groups.join(" OR "),
+            db::cols::<Post>("q2"),
         );
         let mut q = sqlx::query_as::<_, WithCount>(sqlx::AssertSqlSafe(sql));
         for b in &binds {
