@@ -314,6 +314,63 @@ fn struct_from_gob(name: Option<&str>, v: &Value) -> J {
     J::Object(out)
 }
 
+/// JSON read into a model struct and written back: the struct's fields in order (keys matched ignoring case),
+/// missing ones as their zero unless omitempty, empty omitempty ones and unknown keys dropped.
+pub fn normalize(name: &str, j: &J) -> J {
+    normalize_struct(name, j, 0)
+}
+
+fn normalize_struct(name: &str, j: &J, depth: usize) -> J {
+    let (Some(fs), Some(obj)) = (fields(name), j.as_object()) else { return j.clone() };
+    let mut out = Map::new();
+    for (go, js, t) in fs {
+        let (js, omitempty) = json_name(js);
+        if js == "-" {
+            continue;
+        }
+        let v = obj.get(js).or_else(|| {
+            obj.iter().find(|(k, _)| k.eq_ignore_ascii_case(js) || k.eq_ignore_ascii_case(go)).map(|(_, v)| v)
+        });
+        match v {
+            Some(v) if !(omitempty && empty(t, v)) => {
+                out.insert(js.to_string(), normalize_typed(&parse(t), v, depth));
+            }
+            None if !omitempty => {
+                out.insert(js.to_string(), zero_json(t, 0));
+            }
+            _ => {}
+        }
+    }
+    J::Object(out)
+}
+
+fn normalize_typed(g: &Go, v: &J, depth: usize) -> J {
+    if depth > 16 {
+        return v.clone();
+    }
+    match (g, v) {
+        (Go::Named(n), J::Object(_)) => normalize_struct(n, v, depth + 1),
+        (Go::Slice(e), J::Array(a)) => J::Array(a.iter().map(|x| normalize_typed(e, x, depth + 1)).collect()),
+        (Go::Map(_, e), J::Object(m)) => {
+            J::Object(m.iter().map(|(k, x)| (k.clone(), normalize_typed(e, x, depth + 1))).collect())
+        }
+        _ => v.clone(),
+    }
+}
+
+/// Whether an omitempty field of type `t` holding `v` is left out: null, false, 0, "", or an empty list or map;
+/// a struct, even empty, is kept.
+fn empty(t: &str, v: &J) -> bool {
+    match v {
+        J::Null => true,
+        J::Bool(b) => !b,
+        J::Number(n) => n.as_f64() == Some(0.0),
+        J::String(s) => s.is_empty(),
+        J::Array(a) => a.is_empty(),
+        J::Object(o) => o.is_empty() && !t.trim().starts_with('*') && !matches!(parse(t), Go::Named(_)),
+    }
+}
+
 /// The JSON of a Go type's zero value: null for pointers, slices, maps and interfaces, a struct's fields.
 fn zero_json(t: &str, depth: usize) -> J {
     let t = t.trim();
@@ -482,6 +539,20 @@ mod tests {
         assert_eq!(ss.get("SiteURL"), Some(&Value::String("http://s".into())));
         assert_eq!(v.get("FileSettings").and_then(|f| f.get("MaxFileSize")), Some(&Value::Int(100)));
         Encoder::default().encode(&ty("Config"), &v).unwrap();
+    }
+
+    /// A manifest as the server writes it back: zero fields filled in, empty omitempty ones and unknown keys gone.
+    #[test]
+    fn manifest_normalized() {
+        let m = json!({"id": "x.y.z", "version": "1.0.0", "description": "", "extra": 1,
+            "settings_schema": {"settings": [{"key": "K", "type": "text", "secret": true}]}, "webapp": {}});
+        let n = normalize("Manifest", &m);
+        assert_eq!(n["name"], "");
+        assert!(n.get("description").is_none() && n.get("extra").is_none());
+        let s = &n["settings_schema"]["settings"][0];
+        assert_eq!((&s["secret"], &s["hosting"], &s["default"]), (&json!(true), &json!(""), &J::Null));
+        assert!(s.get("options").is_none());
+        assert_eq!(n["webapp"], json!({"bundle_path": ""}));
     }
 
     #[test]

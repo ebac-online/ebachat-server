@@ -6,9 +6,12 @@
 
 pub mod api;
 pub mod http;
+pub mod install;
 mod kv;
+pub mod marketplace;
 pub mod schema;
 mod schema_gen;
+mod signature;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -156,6 +159,7 @@ fn plugin_urls(d: &mut J, base: &str, depth: usize) {
 /// Starts the enabled plugins and checks them from then on.
 pub fn start(app: State) {
     tokio::spawn(async move {
+        install::unpack_stored(&app).await;
         sync(&app).await;
         loop {
             tokio::time::sleep(HEALTH_INTERVAL).await;
@@ -199,7 +203,9 @@ pub fn manifests_in(dir: &str) -> Vec<(PathBuf, J)> {
         }
         let Ok(bytes) = std::fs::read(path.join("plugin.json")) else { continue };
         match serde_json::from_slice::<J>(&bytes) {
-            Ok(m) if m.get("id").and_then(J::as_str).is_some_and(|id| !id.is_empty()) => out.push((path, m)),
+            Ok(m) if m.get("id").and_then(J::as_str).is_some_and(|id| !id.is_empty()) => {
+                out.push((path, schema::normalize("Manifest", &m)));
+            }
             _ => crate::logs::warn("Invalid plugin manifest", &[("path", path.display().to_string().into())]),
         }
     }
@@ -293,10 +299,12 @@ async fn activate(app: &State, dir: &Path, manifest: &J) -> Result<Arc<Active>> 
     };
     let process = match executable(manifest) {
         Some(exe) => {
-            let exe = inside(dir, &exe)?;
+            // Absolute: the process starts in the bundle's directory, where a relative path would not resolve.
+            let exe = std::path::absolute(inside(dir, &exe)?)?;
+            let cwd = std::path::absolute(dir)?;
             let pid = id.clone();
             let log: goplugin::host::LogLine = Arc::new(move |l: &str| plugin_log(&pid, l));
-            let p = Plugin::start(&exe, dir, log).await?;
+            let p = Plugin::start(&exe, &cwd, log).await?;
             let handler: ApiHandler = {
                 let ctx = Arc::new(api::Ctx {
                     app: app.clone(),
@@ -409,6 +417,7 @@ pub async fn execute_command(
             detailed_error: s("detailed_error"),
             request_id: s("request_id"),
             status_code: u16::try_from(status).unwrap_or(500),
+            props: None,
             set_cookie: None,
         }
     });
@@ -429,7 +438,7 @@ pub fn statuses(app: &State) -> Vec<J> {
             };
             let s = |k: &str| m.get(k).and_then(J::as_str).unwrap_or("").to_string();
             json!({
-                "plugin_id": id, "cluster_id": "", "plugin_path": dir.display().to_string(), "state": state,
+                "plugin_id": id, "cluster_id": "", "plugin_path": dir.strip_prefix(".").unwrap_or(&dir).display().to_string(), "state": state,
                 "error": error, "name": s("name"), "description": s("description"), "version": s("version"),
             })
         })

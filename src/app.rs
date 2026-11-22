@@ -359,9 +359,12 @@ pub struct AppError {
     #[serde(skip_serializing_if = "String::is_empty")]
     pub request_id: String,
     pub status_code: u16,
+    /// Context for the client (a plugin install conflict's versions).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub props: Option<Box<std::collections::BTreeMap<String, String>>>,
     /// `Context.RemoveSessionCookie` before the error is written: the `Set-Cookie` header that clears the session.
     #[serde(skip)]
-    pub set_cookie: Option<Box<str>>,
+    pub set_cookie: Option<Box<String>>,
 }
 
 impl AppError {
@@ -372,6 +375,7 @@ impl AppError {
             detailed_error: String::new(),
             request_id: new_id(),
             status_code: status.as_u16(),
+            props: None,
             set_cookie: None,
         }
     }

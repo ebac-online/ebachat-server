@@ -103,7 +103,7 @@ pub fn encode(enc: Enc, data: &[u8]) -> Vec<u8> {
 }
 
 enum Encoder {
-    Gzip(flate2::write::GzEncoder<Vec<u8>>),
+    Gzip(Box<flate2::write::GzEncoder<Vec<u8>>>),
     Zstd(Box<zstd::stream::write::Encoder<'static, Vec<u8>>>),
 }
 
@@ -112,9 +112,11 @@ impl Encoder {
         match enc {
             Enc::Zstd => match zstd::stream::write::Encoder::new(Vec::new(), 1) {
                 Ok(z) => Encoder::Zstd(Box::new(z)),
-                Err(_) => Encoder::Gzip(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default())),
+                Err(_) => {
+                    Encoder::Gzip(Box::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default())))
+                }
             },
-            _ => Encoder::Gzip(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default())),
+            _ => Encoder::Gzip(Box::new(flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default()))),
         }
     }
 
