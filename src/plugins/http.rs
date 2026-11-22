@@ -23,7 +23,10 @@ pub fn routes() -> Router<State> {
         .route("/plugins/{plugin_id}", any(plugin_request_route))
         .route("/plugins/{plugin_id}/", any(plugin_request_route))
         .route("/plugins/{plugin_id}/{*rest}", any(plugin_request_route))
-        .route("/api/v4/plugins", get(list))
+        .route("/api/v4/plugins", get(list).post(upload))
+        .route("/api/v4/plugins/install_from_url", post(install_from_url))
+        .route("/api/v4/plugins/marketplace", get(marketplace_list).post(marketplace_install))
+        .route("/api/v4/plugins/{plugin_id}", axum::routing::delete(remove_plugin))
         .route("/api/v4/plugins/statuses", get(statuses))
         .route("/api/v4/plugins/webapp", get(webapp))
         .route("/api/v4/plugins/{plugin_id}/enable", post(enable))
@@ -404,6 +407,12 @@ async fn set_enabled(app: &State, s: &Session, id: &str, on: bool) -> ApiResult<
     if !super::available(app).iter().any(|(_, m)| manifest_id(m) == id) {
         return Err(AppError::not_found("app.plugin.not_installed.app_error", "Plugin is not installed."));
     }
+    save_state(app, id, on).await?;
+    Ok(crate::users::ok())
+}
+
+/// The plugin enabled or disabled in the saved configuration (which starts or stops it).
+pub async fn save_state(app: &State, id: &str, on: bool) -> ApiResult<()> {
     let mut cfg = app.cfg.value().clone();
     if let Some(ps) = cfg.pointer_mut("/PluginSettings").and_then(J::as_object_mut) {
         let states = ps.entry("PluginStates").or_insert_with(|| json!({}));
@@ -417,6 +426,217 @@ async fn set_enabled(app: &State, s: &Session, id: &str, on: bool) -> ApiResult<
     if !on {
         PLUGINS.remove_commands(id);
     }
+    Ok(())
+}
+
+// ---------- installing and removing ----------
+
+fn uploads_on(app: &App, id: &str) -> ApiResult<()> {
+    let on = app.cfg.bool("PluginSettings.Enable")
+        && app.cfg.bool("PluginSettings.EnableUploads")
+        && !app.cfg.bool("PluginSettings.RequirePluginSignature");
+    if on { Ok(()) } else { Err(AppError::new(StatusCode::NOT_IMPLEMENTED, id, "")) }
+}
+
+/// The plugins directory must not be the import directory or hold it, nor the other way round.
+fn directory_conflict(app: &App) -> ApiResult<()> {
+    let abs = |p: &str| {
+        let p = std::path::Path::new(p);
+        let p = if p.is_absolute() { p.to_path_buf() } else { std::env::current_dir().unwrap_or_default().join(p) };
+        std::path::PathBuf::from(crate::gourl::clean_path(&p.to_string_lossy()))
+    };
+    let dir = match app.cfg.str("PluginSettings.Directory") {
+        "" => "./plugins",
+        d => d,
+    };
+    let (plugins, import) = (abs(dir), abs(app.cfg.str("ImportSettings.Directory")));
+    if plugins.starts_with(&import) || import.starts_with(&plugins) {
+        return Err(AppError::new(StatusCode::FORBIDDEN, "api.plugin.install.directory_conflict.app_error", ""));
+    }
+    Ok(())
+}
+
+fn created(manifest: J) -> Response {
+    (StatusCode::CREATED, axum::Json(manifest)).into_response()
+}
+
+/// A bundle uploaded as the multipart field `plugin`, replacing an installed one with `force=true`. A refusal
+/// closes the connection: the client may still be sending a body nobody reads.
+async fn upload(St(app): St<State>, req: Request) -> Response {
+    let mut r = upload_bundle(app, req).await.unwrap_or_else(IntoResponse::into_response);
+    if !r.status().is_success() {
+        r.headers_mut().insert(header::CONNECTION, header::HeaderValue::from_static("close"));
+    }
+    r
+}
+
+async fn upload_bundle(app: State, req: Request) -> ApiResult<Response> {
+    let (mut parts, body) = req.into_parts();
+    let Auth(s) = <Auth as axum::extract::FromRequestParts<State>>::from_request_parts(&mut parts, &app).await?;
+    let req = Request::from_parts(parts, body);
+    uploads_on(&app, "app.plugin.upload_disabled.app_error")?;
+    app.require(&s, crate::perm::SYSCONSOLE_WRITE_PLUGINS).await?;
+    let ct = header_str(req.headers(), "content-type");
+    let Ok(boundary) = multer::parse_boundary(&ct) else {
+        return Ok(plain(StatusCode::BAD_REQUEST, "request Content-Type isn't multipart/form-data"));
+    };
+    let max = usize::try_from(app.cfg.i64("FileSettings.MaxFileSize").max(1)).unwrap_or(usize::MAX);
+    let too_large = || AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "api.plugin.upload.file_too_large.app_error", "");
+    let mut mp = multer::Multipart::new(req.into_body().into_data_stream(), boundary);
+    let (mut bundle, mut force) = (None, false);
+    loop {
+        let field = match mp.next_field().await {
+            Ok(Some(f)) => f,
+            Ok(None) => break,
+            Err(e) => return Ok(plain(StatusCode::BAD_REQUEST, &e.to_string())),
+        };
+        match field.name() {
+            Some("plugin") if bundle.is_none() => {
+                let mut data = bytes::BytesMut::new();
+                let mut field = field;
+                while let Some(chunk) = field
+                    .chunk()
+                    .await
+                    .map_err(|e| AppError::bad_request("api.plugin.upload.file.app_error", "").detail(e.to_string()))?
+                {
+                    if data.len().saturating_add(chunk.len()) > max {
+                        return Err(too_large());
+                    }
+                    data.extend_from_slice(&chunk);
+                }
+                bundle = Some(data.freeze());
+            }
+            Some("force") => force = field.text().await.is_ok_and(|v| v == "true"),
+            _ => {}
+        }
+    }
+    let bundle = bundle.ok_or_else(|| AppError::bad_request("api.plugin.upload.no_file.app_error", ""))?;
+    directory_conflict(&app)?;
+    Ok(created(super::install::install(&app, bundle, None, force).await?))
+}
+
+#[derive(serde::Deserialize, Default)]
+#[serde(default)]
+struct FromUrl {
+    plugin_download_url: String,
+    force: String,
+}
+
+/// A bundle downloaded from `plugin_download_url` (https unless `AllowInsecureDownloadURL`).
+async fn install_from_url(
+    St(app): St<State>,
+    Auth(s): Auth,
+    crate::app::Query(q): crate::app::Query<FromUrl>,
+) -> ApiResult<Response> {
+    uploads_on(&app, "app.plugin.disabled.app_error")?;
+    app.require(&s, crate::perm::SYSCONSOLE_WRITE_PLUGINS).await?;
+    let force = matches!(q.force.as_str(), "1" | "t" | "T" | "true" | "TRUE" | "True");
+    let failed = |d: String| AppError::bad_request("api.plugin.install.download_failed.app_error", "").detail(d);
+    let url = reqwest::Url::parse(&q.plugin_download_url)
+        .ok()
+        .filter(|_| crate::command_admin::valid_http_url(&q.plugin_download_url))
+        .ok_or_else(|| failed(format!("invalid url {}", q.plugin_download_url)))?;
+    if url.scheme() != "https" && !app.cfg.bool("PluginSettings.AllowInsecureDownloadURL") {
+        return Err(failed(format!("insecure url not allowed {url}")));
+    }
+    let max = usize::try_from(app.cfg.i64("FileSettings.MaxFileSize").max(1)).unwrap_or(usize::MAX);
+    let mut last = String::new();
+    let mut bundle = None;
+    for attempt in 0..3u64 {
+        if attempt > 0 {
+            tokio::time::sleep(std::time::Duration::from_secs(attempt)).await;
+        }
+        match download(&app, &url, max).await {
+            Ok(b) => {
+                bundle = Some(b);
+                break;
+            }
+            Err(e) => last = e,
+        }
+    }
+    let bundle = bundle.ok_or_else(|| failed(last))?;
+    directory_conflict(&app)?;
+    Ok(created(super::install::install(&app, bundle, None, force).await?))
+}
+
+pub(crate) async fn download(app: &App, url: &reqwest::Url, max: usize) -> Result<bytes::Bytes, String> {
+    use futures_util::StreamExt;
+    let r = app.trusted_client().get(url.clone()).send().await.map_err(|e| e.to_string())?;
+    if !r.status().is_success() {
+        return Err(format!("status {}", r.status()));
+    }
+    let mut data = bytes::BytesMut::new();
+    let mut stream = r.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| e.to_string())?;
+        if data.len().saturating_add(chunk.len()) > max {
+            return Err("plugin bundle too large".into());
+        }
+        data.extend_from_slice(&chunk);
+    }
+    Ok(data.freeze())
+}
+
+fn marketplace_on(app: &App) -> ApiResult<()> {
+    plugins_on(app)?;
+    if !app.cfg.bool("PluginSettings.EnableMarketplace") {
+        return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "app.plugin.marketplace_disabled.app_error", ""));
+    }
+    Ok(())
+}
+
+/// Marketplace plugins merged with the installed ones; without `remote_only`, for those who may read plugins.
+async fn marketplace_list(
+    St(app): St<State>,
+    Auth(s): Auth,
+    crate::app::Query(q): crate::app::Query<std::collections::HashMap<String, String>>,
+) -> ApiResult<axum::Json<J>> {
+    marketplace_on(&app)?;
+    let bad = |d: String| AppError::internal("app.plugin.marshal.app_error", d);
+    for k in ["page", "per_page"] {
+        if q.get(k).is_some_and(|v| !v.is_empty() && v.parse::<i64>().is_err()) {
+            return Err(bad(format!("failed to parse {k} as integer")));
+        }
+    }
+    let flag = |k: &str| matches!(q.get(k).map(String::as_str), Some("1" | "t" | "T" | "true" | "TRUE" | "True"));
+    let f = super::marketplace::Filter {
+        filter: q.get("filter").cloned().unwrap_or_default(),
+        local_only: flag("local_only"),
+        remote_only: flag("remote_only"),
+    };
+    if f.local_only && f.remote_only {
+        return Err(bad("local_only and remote_only cannot be both true".into()));
+    }
+    if !f.remote_only {
+        app.require(&s, crate::perm::SYSCONSOLE_READ_PLUGINS).await?;
+    }
+    Ok(axum::Json(super::marketplace::list(&app, &f).await?))
+}
+
+/// The latest compatible version of a marketplace plugin, installed: `{"id": ...}`.
+async fn marketplace_install(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes) -> ApiResult<Response> {
+    marketplace_on(&app)?;
+    app.require(&s, crate::perm::SYSCONSOLE_WRITE_PLUGINS).await?;
+    #[derive(serde::Deserialize)]
+    struct Req {
+        #[serde(default)]
+        id: String,
+    }
+    let r: Option<Req> = serde_json::from_slice(&body).map_err(|e| {
+        AppError::new(StatusCode::NOT_IMPLEMENTED, "app.plugin.marketplace_plugin_request.app_error", "")
+            .detail(e.to_string())
+    })?;
+    let id = r.map(|r| r.id).unwrap_or_default();
+    Ok(created(super::marketplace::install(&app, &id).await?))
+}
+
+async fn remove_plugin(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) -> ApiResult<axum::Json<J>> {
+    if id.len() > 190 {
+        return Err(AppError::invalid_url_param("plugin_id"));
+    }
+    plugins_on(&app)?;
+    app.require(&s, crate::perm::SYSCONSOLE_WRITE_PLUGINS).await?;
+    super::install::remove(&app, &id).await?;
     Ok(crate::users::ok())
 }
 
