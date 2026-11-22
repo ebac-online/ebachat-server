@@ -1,9 +1,9 @@
 //! REST API v4: the routes of every area, and what is answered as a server without plugins or a license.
 
+use axum::Router;
 use axum::http::Uri;
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 
 use crate::app::{AppError, State};
 
@@ -16,7 +16,8 @@ async fn not_found(
     uri: Uri,
 ) -> axum::response::Response {
     let api = uri.path().starts_with("/api/");
-    if !api && crate::web::static_enabled() && (method == axum::http::Method::GET || method == axum::http::Method::HEAD) {
+    if !api && crate::web::static_enabled() && (method == axum::http::Method::GET || method == axum::http::Method::HEAD)
+    {
         return crate::web::root_for(&app, &headers, &uri).await;
     }
     if !api {
@@ -102,6 +103,93 @@ async fn head_as_go(req: axum::extract::Request, next: axum::middleware::Next) -
     next.run(req).await
 }
 
+const ID: &str = "[A-Za-z0-9]+";
+
+static PARAM_PATTERNS: std::sync::LazyLock<std::collections::HashMap<&'static str, regex::Regex>> =
+    std::sync::LazyLock::new(|| {
+        [
+            ("action_id", "[A-Za-z0-9_-]+"),
+            ("app_id", ID),
+            ("bookmark_id", ID),
+            ("bot_user_id", ID),
+            ("category", "[A-Za-z0-9_]+"),
+            ("category_id", "[A-Za-z0-9_-]+"),
+            ("channel_id", ID),
+            ("channel_name", "[A-Za-z0-9_-]+"),
+            ("command_id", ID),
+            ("content_reviewer_id", ID),
+            ("email", ".+"),
+            ("emoji_id", ID),
+            ("emoji_name", "[A-Za-z0-9_+-]+"),
+            ("export_name", r".+\.zip"),
+            ("field_id", ID),
+            ("file_id", ID),
+            ("fingerprint", "[a-f0-9]{32}"),
+            ("group_id", ID),
+            ("group_name", "[a-z][a-z0-9_]*"),
+            ("hook_id", ID),
+            ("import_name", r".+\.zip"),
+            ("invite_id", ID),
+            ("invoice_id", "[_A-Za-z0-9]+"),
+            ("job_id", ID),
+            ("job_type", "[A-Za-z0-9_-]+"),
+            ("object_type", "[a-z]+"),
+            ("other_user_id", ID),
+            ("outgoing_oauth_connection_id", ID),
+            ("plugin_id", "[A-Za-z0-9_.-]+"),
+            ("policy_id", ID),
+            ("post_id", ID),
+            ("preference_name", "[A-Za-z0-9_]+"),
+            ("recap_id", ID),
+            ("remote_id", ID),
+            ("report_id", ID),
+            ("request_id", ID),
+            ("restore_version_id", ID),
+            ("role_id", ID),
+            ("role_name", "[a-z0-9_]+"),
+            ("scheduled_post_id", ID),
+            ("scheduled_recap_id", ID),
+            ("scheme_id", ID),
+            ("syncable_id", ID),
+            ("syncable_type", "teams|channels"),
+            ("target_id", ID),
+            ("team_id", ID),
+            ("team_name", "[A-Za-z0-9_-]+"),
+            ("thread_id", ID),
+            ("timestamp", "[0-9]+"),
+            ("token_id", ID),
+            ("upload_id", ID),
+            ("user_id", ID),
+            ("username", "[A-Za-z0-9_.-]+"),
+            ("view_id", ID),
+        ]
+        .into_iter()
+        .filter_map(|(name, p)| regex::Regex::new(&format!("^(?:{p})$")).ok().map(|r| (name, r)))
+        .collect()
+    });
+
+/// A path parameter its route's pattern does not take: no route.
+async fn param_patterns(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    use axum::extract::FromRequestParts;
+    use axum::extract::rejection::RawPathParamsRejection;
+    let (mut parts, body) = req.into_parts();
+    // LDAP routes take any parameter.
+    if parts.uri.path().starts_with("/api/v4/") && !parts.uri.path().starts_with("/api/v4/ldap/") {
+        match axum::extract::RawPathParams::from_request_parts(&mut parts, &()).await {
+            Ok(params) => {
+                if params.iter().any(|(k, v)| PARAM_PATTERNS.get(k).is_some_and(|r| !r.is_match(v))) {
+                    return route_not_found(parts.uri.path()).into_response();
+                }
+            }
+            Err(RawPathParamsRejection::InvalidUtf8InPathParam(_)) => {
+                return route_not_found(parts.uri.path()).into_response();
+            }
+            Err(_) => {}
+        }
+    }
+    next.run(axum::extract::Request::from_parts(parts, body)).await
+}
+
 /// `LOG_REQUESTS=1`: one line per request on stderr (method, path, status, ms), to watch a real client.
 async fn log_request(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
     let (method, uri, t) = (req.method().clone(), req.uri().clone(), std::time::Instant::now());
@@ -170,23 +258,51 @@ async fn go_headers(req: axum::extract::Request, next: axum::middleware::Next) -
     r
 }
 
+/// A path with `.`, `..` or empty segments: a permanent redirect to the cleaned one, query kept.
+async fn clean_path(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let path = req.uri().path();
+    let clean = cleaned_path(path);
+    if clean != path {
+        let location = match req.uri().query() {
+            Some(q) => format!("{clean}?{q}"),
+            None => clean,
+        };
+        return (axum::http::StatusCode::MOVED_PERMANENTLY, [(axum::http::header::LOCATION, location)]).into_response();
+    }
+    next.run(req).await
+}
+
+fn cleaned_path(p: &str) -> String {
+    let mut out = format!("/{}", crate::files::clean(p));
+    if p.ends_with('/') && out != "/" {
+        out.push('/');
+    }
+    out
+}
+
 pub fn router(app: State) -> Router {
     crate::app::DEVELOPER.store(app.cfg.bool("ServiceSettings.EnableDeveloper"), std::sync::atomic::Ordering::Relaxed);
     crate::outgoing::spawn_worker(app.clone());
     crate::push::spawn(app.clone());
     crate::email::spawn_batching(app.clone());
     let cors = crate::cors::Cors::from_config(&app.cfg);
-    let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(request_limit(app.db.options().get_max_connections())));
+    let permits =
+        std::sync::Arc::new(tokio::sync::Semaphore::new(request_limit(app.db.options().get_max_connections())));
     let r = routes(app.clone())
         .layer(axum::middleware::from_fn_with_state(app, crate::audit::layer))
         .layer(axum::middleware::from_fn(move |req, next| limit_requests(permits.clone(), req, next)))
-        .layer(axum::middleware::from_fn(go_headers));
+        .layer(axum::middleware::from_fn(go_headers))
+        .layer(axum::middleware::from_fn(clean_path));
     // Go wraps its whole handler in rs/cors when AllowCorsFrom is set.
     let r = match cors {
         Some(c) => r.layer(axum::middleware::from_fn(move |req, next| crate::cors::layer(c.clone(), req, next))),
         None => r,
     };
-    if std::env::var("LOG_REQUESTS").is_ok_and(|v| v == "1") { r.layer(axum::middleware::from_fn(log_request)) } else { r }
+    if std::env::var("LOG_REQUESTS").is_ok_and(|v| v == "1") {
+        r.layer(axum::middleware::from_fn(log_request))
+    } else {
+        r
+    }
 }
 
 /// Every cache's size and hit, miss and invalidation counters (Go exports them as Prometheus metrics); system
@@ -225,6 +341,7 @@ fn routes(app: State) -> Router {
         .merge(crate::license::routes())
         .merge(crate::cpa::routes())
         .merge(crate::unlicensed::routes())
+        .merge(crate::plugins::http::routes())
         .merge(crate::properties::routes())
         .merge(crate::commands::routes())
         .merge(crate::command_admin::routes())
@@ -246,6 +363,7 @@ fn routes(app: State) -> Router {
     let r = if gzip { r.layer(axum::middleware::from_fn(crate::compress::layer)) } else { r };
     let r = r
         .layer(axum::middleware::from_fn(head_as_go))
+        .layer(axum::middleware::from_fn(param_patterns))
         .fallback(not_found_marked)
         .method_not_allowed_fallback(method_mismatch)
         .with_state(app);
@@ -263,4 +381,31 @@ async fn not_found_marked(
     let mut res = not_found(state, method, headers, uri).await;
     res.extensions_mut().insert(Rerouted);
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PARAM_PATTERNS;
+
+    #[test]
+    fn param_patterns() {
+        assert_eq!(PARAM_PATTERNS.len(), 54);
+        let ok = |k: &str, v: &str| PARAM_PATTERNS[k].is_match(v);
+        assert!(ok("user_id", "me") && ok("user_id", "abc123"));
+        assert!(!ok("user_id", "ж") && !ok("user_id", " ") && !ok("user_id", "a.b") && !ok("user_id", ""));
+        assert!(ok("export_name", "x.zip") && !ok("export_name", "x"));
+        assert!(ok("syncable_type", "teams") && !ok("syncable_type", "teamsx"));
+        assert!(ok("emoji_name", "+1") && ok("username", "a.b-c_d"));
+    }
+
+    #[test]
+    fn cleaned_paths() {
+        use super::cleaned_path as c;
+        assert_eq!(c("/api/v4/users/../system/ping"), "/api/v4/system/ping");
+        assert_eq!(c("/api/v4//users/./me/"), "/api/v4/users/me/");
+        assert_eq!(c("/.."), "/");
+        assert_eq!(c("/a/.."), "/");
+        assert_eq!(c("/api/v4/users/me"), "/api/v4/users/me");
+        assert_eq!(c("/"), "/");
+    }
 }

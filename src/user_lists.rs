@@ -6,13 +6,13 @@
 
 use std::sync::Arc;
 
-use axum::extract::State as St;
 use crate::app::Query;
+use axum::extract::State as St;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
-use crate::app::{ApiResult, App, AppError, Auth, BusyAuth, Body, State, is_valid_id};
+use crate::app::{ApiResult, App, AppError, Auth, Body, BusyAuth, State, is_valid_id};
 use crate::model::{Session, Show, User};
 use crate::perm;
 use crate::users::{Arg, query_users, sanitized};
@@ -134,8 +134,13 @@ impl MultiRoles {
                         args.push(Arg::S(r.clone()));
                         or.push(format!("u.Roles = ${}", args.len()));
                     }
-                    "system_guest" | "system_admin" | "system_user_manager" | "system_read_only_admin" | "system_manager"
-                    | "system_custom_group_admin" | "shared_channel_manager" => {
+                    "system_guest"
+                    | "system_admin"
+                    | "system_user_manager"
+                    | "system_read_only_admin"
+                    | "system_manager"
+                    | "system_custom_group_admin"
+                    | "shared_channel_manager" => {
                         args.push(Arg::S(format!("%{r}%").to_lowercase()));
                         or.push(format!("u.Roles ILIKE ${}", args.len()));
                     }
@@ -222,7 +227,9 @@ async fn get_users_inner(St(app): St<State>, Auth(s): Auth, Query(q): Query<User
     if !q.role.is_empty() || !q.roles.is_empty() || !q.channel_roles.is_empty() || !q.team_roles.is_empty() {
         let all: Vec<(String,)> = sqlx::query_as("SELECT Name FROM Roles").fetch_all(&app.db).await?;
         let known = |names: &[String]| names.iter().all(|n| all.iter().any(|(a,)| a == n));
-        if !q.role.is_empty() && (clean_role_names(&q.role).is_none() || q.role.contains(',') || !known(std::slice::from_ref(&q.role))) {
+        if !q.role.is_empty()
+            && (clean_role_names(&q.role).is_none() || q.role.contains(',') || !known(std::slice::from_ref(&q.role)))
+        {
             return Err(AppError::invalid_param("role"));
         }
         for (raw, name, scope, out) in [
@@ -446,7 +453,14 @@ async fn perform_search(
     Ok(dedup(query_users(app, joins, &cond, &tail, args).await?))
 }
 
-async fn search_in_team(app: &App, s: &Session, team: &str, term: &str, role: (&str, &MultiRoles), o: SearchOpts) -> ApiResult<Vec<User>> {
+async fn search_in_team(
+    app: &App,
+    s: &Session,
+    team: &str,
+    term: &str,
+    role: (&str, &MultiRoles),
+    o: SearchOpts,
+) -> ApiResult<Vec<User>> {
     if team.is_empty() {
         return perform_search(app, s, "", "true".into(), vec![], term, role, o).await;
     }
@@ -454,7 +468,14 @@ async fn search_in_team(app: &App, s: &Session, team: &str, term: &str, role: (&
     perform_search(app, s, joins, "true".into(), vec![Arg::S(team.into())], term, role, o).await
 }
 
-async fn search_in_channel(app: &App, s: &Session, channel: &str, term: &str, role: (&str, &MultiRoles), o: SearchOpts) -> ApiResult<Vec<User>> {
+async fn search_in_channel(
+    app: &App,
+    s: &Session,
+    channel: &str,
+    term: &str,
+    role: (&str, &MultiRoles),
+    o: SearchOpts,
+) -> ApiResult<Vec<User>> {
     let joins = "JOIN ChannelMembers cm ON (cm.UserId = u.Id AND cm.ChannelId = $1)";
     perform_search(app, s, joins, "true".into(), vec![Arg::S(channel.into())], term, role, o).await
 }

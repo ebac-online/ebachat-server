@@ -8,8 +8,8 @@ use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use axum::extract::{Multipart, Path, State as St};
 use crate::app::Query;
+use axum::extract::{Multipart, Path, State as St};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -45,6 +45,15 @@ pub fn routes() -> Router<State> {
 pub fn is_system_emoji(name: &str) -> bool {
     static NAMES: OnceLock<HashSet<&'static str>> = OnceLock::new();
     NAMES.get_or_init(|| include_str!("../data/system_emojis.txt").lines().collect()).contains(name)
+}
+
+/// `GetSystemEmojiId`: the code point sequence a system emoji's image is named after.
+pub fn system_emoji_code(name: &str) -> Option<&'static str> {
+    static CODES: OnceLock<std::collections::HashMap<&'static str, &'static str>> = OnceLock::new();
+    CODES
+        .get_or_init(|| include_str!("../data/emoji_codes.txt").lines().filter_map(|l| l.split_once(' ')).collect())
+        .get(name)
+        .copied()
 }
 
 /// `IsValidEmojiName`.
@@ -86,6 +95,20 @@ impl App {
             self.cache_emoji(&e);
             e
         }))
+    }
+
+    /// `GetEmojiStaticURL`: a system emoji's image under `/static/emoji`, a custom one's under `/api/v4/emoji`,
+    /// below the site's subpath.
+    pub async fn emoji_static_url(&self, name: &str) -> Option<String> {
+        let sub = crate::web::subpath(self.cfg.str("ServiceSettings.SiteURL"));
+        let sub = sub.trim_end_matches('/');
+        if let Some(code) = system_emoji_code(name) {
+            return Some(format!("{sub}/static/emoji/{code}.png"));
+        }
+        match self.emoji_by_name(name).await {
+            Ok(Some(e)) => Some(format!("{sub}/api/v4/emoji/{}/image", e.id)),
+            _ => None,
+        }
     }
 
     /// `EmojiStore.GetByName` through the name cache.
@@ -176,7 +199,8 @@ async fn list(St(app): St<State>, _: Auth, Query(q): Query<ListQuery>) -> ApiRes
     let per = q.per_page.unwrap_or(60).clamp(0, 200);
     let order = if q.sort == "name" { "ORDER BY Name" } else { "" };
     let sql = format!("{} WHERE DeleteAt = 0 {order} LIMIT $1 OFFSET $2", Emoji::SELECT);
-    let list: Vec<Emoji> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(per).bind(per * q.page.max(0)).fetch_all(&app.db).await?;
+    let list: Vec<Emoji> =
+        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(per).bind(per * q.page.max(0)).fetch_all(&app.db).await?;
     Ok(Json(list))
 }
 
@@ -194,10 +218,8 @@ async fn by_name(St(app): St<State>, _: Auth, Path(name): Path<String>) -> ApiRe
         return Err(AppError::invalid_url_param("emoji_name"));
     }
     app.emoji_on()?;
-    let e = app
-        .emoji_by_name(&name)
-        .await?
-        .ok_or_else(|| AppError::not_found("app.emoji.get_by_name.no_result", ""))?;
+    let e =
+        app.emoji_by_name(&name).await?.ok_or_else(|| AppError::not_found("app.emoji.get_by_name.no_result", ""))?;
     Ok(Json((*e).clone()))
 }
 
@@ -314,16 +336,19 @@ async fn create(
                 let name = field.file_name().unwrap_or("").to_string();
                 let data = field.bytes().await.map_err(|e| parse_err(e.to_string()))?;
                 if data.len() > MAX_FILE_SIZE {
-                    return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "api.emoji.create.too_large.app_error", ""));
+                    return Err(AppError::new(
+                        StatusCode::PAYLOAD_TOO_LARGE,
+                        "api.emoji.create.too_large.app_error",
+                        "",
+                    ));
                 }
                 image = Some((name, data.to_vec()));
             }
             _ => {}
         }
     }
-    let mut emoji: Emoji = emoji_json
-        .and_then(|j| serde_json::from_str(&j).ok())
-        .ok_or_else(|| AppError::invalid_param("emoji"))?;
+    let mut emoji: Emoji =
+        emoji_json.and_then(|j| serde_json::from_str(&j).ok()).ok_or_else(|| AppError::invalid_param("emoji"))?;
     // PreSave, IsValid
     emoji.id = new_id();
     emoji.name = emoji.name.to_lowercase();
@@ -346,7 +371,9 @@ async fn create(
         .write(&format!("emoji/{}/image", emoji.id), stored.into())
         .await
         .map_err(|e| AppError::internal("api.file.upload_file.storage.app_error", e.to_string()))?;
-    db::insert(&app.db, &emoji).await.map_err(|e| AppError::internal("app.emoji.create.internal_error", e.to_string()))?;
+    db::insert(&app.db, &emoji)
+        .await
+        .map_err(|e| AppError::internal("app.emoji.create.internal_error", e.to_string()))?;
     // LocalCacheEmojiStore.Save: a cached "not found" for the name goes.
     app.caches.emoji_by_name.remove(emoji.name.as_str());
     app.hub.publish("emoji_added", json!({ "emoji": serde_json::to_string(&emoji).unwrap() }), Broadcast::default());
@@ -398,16 +425,23 @@ fn emoji_image(data: &[u8]) -> ApiResult<Vec<u8>> {
         enc.set_repeat(image::codecs::gif::Repeat::Infinite).map_err(|e| decode_err(e.to_string()))?;
         for f in frames {
             let delay = f.delay();
-            let img = image::DynamicImage::ImageRgba8(f.into_buffer()).resize(MAX_WIDTH, MAX_HEIGHT, image::imageops::FilterType::Lanczos3);
-            enc.encode_frame(image::Frame::from_parts(img.to_rgba8(), 0, 0, delay))
-                .map_err(|e| AppError::bad_request("api.emoji.upload.large_image.gif_encode_error", "").detail(e.to_string()))?;
+            let img = image::DynamicImage::ImageRgba8(f.into_buffer()).resize(
+                MAX_WIDTH,
+                MAX_HEIGHT,
+                image::imageops::FilterType::Lanczos3,
+            );
+            enc.encode_frame(image::Frame::from_parts(img.to_rgba8(), 0, 0, delay)).map_err(|e| {
+                AppError::bad_request("api.emoji.upload.large_image.gif_encode_error", "").detail(e.to_string())
+            })?;
         }
         drop(enc);
     } else {
         let img = image::load_from_memory(data).map_err(|e| decode_err(e.to_string()))?;
         img.resize(MAX_WIDTH, MAX_HEIGHT, image::imageops::FilterType::Lanczos3)
             .write_to(&mut out, image::ImageFormat::Png)
-            .map_err(|e| AppError::bad_request("api.emoji.upload.large_image.encode_error", "").detail(e.to_string()))?;
+            .map_err(|e| {
+                AppError::bad_request("api.emoji.upload.large_image.encode_error", "").detail(e.to_string())
+            })?;
     }
     Ok(out.into_inner())
 }
@@ -443,10 +477,11 @@ async fn delete(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) -> Ap
         let _ = app.files.remove(&from).await;
     }
     // deleteReactionsForEmoji: SqlReactionStore.DeleteAllWithEmojiName.
-    let posts: Vec<(String,)> = sqlx::query_as("SELECT DISTINCT PostId FROM Reactions WHERE EmojiName = $1 AND DeleteAt = 0")
-        .bind(&e.name)
-        .fetch_all(&app.db)
-        .await?;
+    let posts: Vec<(String,)> =
+        sqlx::query_as("SELECT DISTINCT PostId FROM Reactions WHERE EmojiName = $1 AND DeleteAt = 0")
+            .bind(&e.name)
+            .fetch_all(&app.db)
+            .await?;
     sqlx::query("UPDATE Reactions SET UpdateAt = $1, DeleteAt = $1 WHERE EmojiName = $2 AND DeleteAt = 0")
         .bind(now)
         .bind(&e.name)
@@ -464,4 +499,14 @@ async fn delete(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) -> Ap
         .await;
     }
     Ok(crate::users::ok())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn system_emoji_codes() {
+        assert_eq!(super::system_emoji_code("ghost"), Some("1f47b"));
+        assert_eq!(super::system_emoji_code("+1"), Some("1f44d"));
+        assert_eq!(super::system_emoji_code("no_such_emoji"), None);
+    }
 }

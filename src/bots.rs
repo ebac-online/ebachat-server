@@ -6,9 +6,9 @@
 
 use std::collections::HashMap;
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -87,10 +87,10 @@ const SELECT: &str = "SELECT b.UserId AS user_id, u.Username AS username, u.Firs
 
 #[derive(Deserialize, Default)]
 #[serde(default)]
-struct BotPatch {
-    username: Option<String>,
-    display_name: Option<String>,
-    description: Option<String>,
+pub(crate) struct BotPatch {
+    pub username: Option<String>,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
 }
 
 impl BotPatch {
@@ -341,49 +341,55 @@ async fn patch(St(app): St<State>, Auth(s): Auth, Path(bot_id): Path<String>, bo
         .map_err(|e| AppError::invalid_param("bot").detail(e.to_string()))?;
     let patch = patch.ok_or_else(|| AppError::invalid_param("bot"))?;
     app.require_manage_bot(&s, &bot_id).await?;
-    // PatchBot
-    let mut b = app.bot(&bot_id, true).await?;
-    if !patch.would_patch(&b) {
-        return Ok(Json(b));
+    Ok(Json(app.patch_bot(&bot_id, patch).await?))
+}
+
+impl App {
+    /// A bot and its user patched.
+    pub(crate) async fn patch_bot(&self, bot_id: &str, patch: BotPatch) -> ApiResult<Bot> {
+        let app = self;
+        let mut b = app.bot(bot_id, true).await?;
+        if !patch.would_patch(&b) {
+            return Ok(b);
+        }
+        let was_system = b.system_owned;
+        patch.apply(&mut b);
+        if !was_system && is_protected(&b.username) {
+            return Err(AppError::bad_request("app.bot.patchbot.reserved_username.app_error", ""));
+        }
+        // UserStore.Update of the bot's user: name, email and display name only (no default picture redrawn, unlike
+        // App.UpdateUser).
+        let user = app.user(bot_id).await?.ok_or_else(missing_account)?;
+        let mut u = (*user).clone();
+        u.username = crate::user_edit::sanitize_unicode(&b.username).to_lowercase();
+        u.email = format!("{}@localhost", b.username).to_lowercase();
+        u.first_name = crate::user_edit::sanitize_unicode(&b.display_name);
+        crate::user_edit::check_user(&u)?;
+        let r = sqlx::query("UPDATE Users SET Username = $1, Email = $2, FirstName = $3, UpdateAt = $4 WHERE Id = $5")
+            .bind(&u.username)
+            .bind(&u.email)
+            .bind(&u.first_name)
+            .bind(now_ms())
+            .bind(&u.id)
+            .execute(&app.db)
+            .await;
+        if let Err(e) = r {
+            let m = e.to_string();
+            let id = if m.contains("username") {
+                "app.user.save.username_exists.app_error"
+            } else if m.contains("email") {
+                "app.user.save.email_exists.app_error"
+            } else {
+                return Err(AppError::internal("app.user.update.finding.app_error", m));
+            };
+            return Err(AppError::bad_request(id, ""));
+        }
+        app.invalidate_user(&u.id);
+        if let Some(fresh) = app.user(&u.id).await? {
+            app.send_updated_user_event(&fresh);
+        }
+        app.store_bot(&b).await
     }
-    let was_system = b.system_owned;
-    patch.apply(&mut b);
-    if !was_system && is_protected(&b.username) {
-        return Err(AppError::bad_request("app.bot.patchbot.reserved_username.app_error", ""));
-    }
-    // UserStore.Update of the bot's user: name, email and display name only (no default picture redrawn, unlike
-    // App.UpdateUser).
-    let user = app.user(&bot_id).await?.ok_or_else(missing_account)?;
-    let mut u = (*user).clone();
-    u.username = crate::user_edit::sanitize_unicode(&b.username).to_lowercase();
-    u.email = format!("{}@localhost", b.username).to_lowercase();
-    u.first_name = crate::user_edit::sanitize_unicode(&b.display_name);
-    crate::user_edit::check_user(&u)?;
-    let r = sqlx::query("UPDATE Users SET Username = $1, Email = $2, FirstName = $3, UpdateAt = $4 WHERE Id = $5")
-        .bind(&u.username)
-        .bind(&u.email)
-        .bind(&u.first_name)
-        .bind(now_ms())
-        .bind(&u.id)
-        .execute(&app.db)
-        .await;
-    if let Err(e) = r {
-        let m = e.to_string();
-        let id = if m.contains("username") {
-            "app.user.save.username_exists.app_error"
-        } else if m.contains("email") {
-            "app.user.save.email_exists.app_error"
-        } else {
-            return Err(AppError::internal("app.user.update.finding.app_error", m));
-        };
-        return Err(AppError::bad_request(id, ""));
-    }
-    app.invalidate_user(&u.id);
-    if let Some(fresh) = app.user(&u.id).await? {
-        app.send_updated_user_event(&fresh);
-    }
-    let stored = app.store_bot(&b).await?;
-    Ok(Json(stored))
 }
 
 /// `getBot`: others' bots with `read_others_bots`, one's own with `read_bots`; otherwise not found.

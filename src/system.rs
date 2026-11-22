@@ -7,8 +7,8 @@
 
 use std::collections::BTreeMap;
 
-use axum::extract::State as St;
 use crate::app::Query;
+use axum::extract::State as St;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -68,7 +68,8 @@ async fn ping(St(app): St<State>, MaybeAuth(s): MaybeAuth, Query(q): Query<PingQ
     if !q.device_id.is_empty() {
         m.insert("CanReceiveNotifications".into(), crate::push::send_test(&app, &q.device_id).await.into());
     }
-    let code = if healthy || q.use_rest_semantics == "true" { StatusCode::OK } else { StatusCode::INTERNAL_SERVER_ERROR };
+    let code =
+        if healthy || q.use_rest_semantics == "true" { StatusCode::OK } else { StatusCode::INTERNAL_SERVER_ERROR };
     (code, Json(m)).into_response()
 }
 
@@ -95,7 +96,11 @@ impl App {
             .fetch_optional(&self.db)
             .await?;
         c.insert("InstallationDate".into(), installed.map(|v| v.0).unwrap_or_default());
-        let schema: Option<(i64,)> = sqlx::query_as("SELECT MAX(Version)::bigint FROM db_migrations").fetch_optional(&self.db).await.ok().flatten();
+        let schema: Option<(i64,)> = sqlx::query_as("SELECT MAX(Version)::bigint FROM db_migrations")
+            .fetch_optional(&self.db)
+            .await
+            .ok()
+            .flatten();
         if let Some((v,)) = schema {
             c.insert("SchemaVersion".into(), v.to_string());
         }
@@ -184,7 +189,6 @@ async fn load_metric(_: Auth) -> Json<Value> {
     Json(json!({"load": 0}))
 }
 
-
 async fn onboarding(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<Value>> {
     crate::audit::log(&app, Some(&s), "attempt").await;
     app.require(&s, perm::MANAGE_SYSTEM).await?;
@@ -195,7 +199,11 @@ async fn onboarding(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<Value>>
 }
 
 /// `getRolesByNames` through the role cache.
-async fn roles_by_names(St(app): St<State>, _: crate::app::AuthTrusted, body: axum::body::Bytes) -> ApiResult<Json<Vec<Role>>> {
+async fn roles_by_names(
+    St(app): St<State>,
+    _: crate::app::AuthTrusted,
+    body: axum::body::Bytes,
+) -> ApiResult<Json<Vec<Role>>> {
     // `SortedArrayFromJSON`: a bad body is a payload error, duplicates dropped.
     let mut names: Vec<String> = serde_json::from_slice::<Option<Vec<String>>>(&body)
         .map_err(|e| AppError::bad_request("api.payload.parse.error", "").detail(e.to_string()))?
@@ -227,14 +235,17 @@ async fn roles_by_names(St(app): St<State>, _: crate::app::AuthTrusted, body: ax
     Ok(Json(roles))
 }
 
-
-
 /// `pushNotificationAck`: the ack is passed on to the push proxy. An id-loaded notification would get its
 /// message from the licensed notification service, which this server (as Go without a license) does not have.
 async fn push_ack(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes) -> ApiResult<Response> {
     let parse = |e: String| AppError::bad_request("api.push_notifications_ack.message.parse.app_error", "").detail(e);
-    let v = serde_json::Deserializer::from_slice(&body).into_iter::<Value>().next().ok_or_else(|| parse("EOF".into()))?.map_err(|e| parse(e.to_string()))?;
-    let ack: crate::push::Ack = if v.is_null() { Default::default() } else { serde_json::from_value(v).map_err(|e| parse(e.to_string()))? };
+    let v = serde_json::Deserializer::from_slice(&body)
+        .into_iter::<Value>()
+        .next()
+        .ok_or_else(|| parse("EOF".into()))?
+        .map_err(|e| parse(e.to_string()))?;
+    let ack: crate::push::Ack =
+        if v.is_null() { Default::default() } else { serde_json::from_value(v).map_err(|e| parse(e.to_string()))? };
     if !app.cfg.bool("EmailSettings.SendPushNotifications") {
         return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.push_notification.disabled.app_error", ""));
     }
@@ -243,14 +254,16 @@ async fn push_ack(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes) ->
         && ack.client_platform == "ios"
     {
         // iOS sends no ack while notifications are off, so one means they are on again.
-        let _ = crate::push::set_session_props(&app, &s, &[(crate::push::PROP_DEVICE_NOTIFICATION_DISABLED, "false")]).await;
+        let _ = crate::push::set_session_props(&app, &s, &[(crate::push::PROP_DEVICE_NOTIFICATION_DISABLED, "false")])
+            .await;
         app.clear_sessions_for_user(&s.user_id);
     }
     let sent = crate::push::send_ack(&app, &ack).await;
     if ack.is_id_loaded {
         if !ack.post_id.is_empty() && ack.notification_type == crate::push::MESSAGE {
             let post: Option<crate::model::Post> = crate::db::get(&app.db, &ack.post_id).await?;
-            let post = post.filter(|p| p.delete_at == 0).ok_or_else(|| AppError::not_found("app.post.get.app_error", ""))?;
+            let post =
+                post.filter(|p| p.delete_at == 0).ok_or_else(|| AppError::not_found("app.post.get.app_error", ""))?;
             let c = app.channel_or_404(&post.channel_id).await?;
             if !app.can_read_channel(&s, &c).await?.0 {
                 return Err(AppError::forbidden_perm(perm::READ_CHANNEL_CONTENT));

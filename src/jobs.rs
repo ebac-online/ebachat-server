@@ -143,10 +143,11 @@ async fn save(app: &App, j: &Job) -> ApiResult<()> {
 async fn save_once(app: &App, j: &Job) -> ApiResult<bool> {
     let mut tx = app.db.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE").execute(&mut *tx).await?;
-    let (n,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM Jobs WHERE Status IN ('pending', 'in_progress') AND Type = $1")
-        .bind(&j.r#type)
-        .fetch_one(&mut *tx)
-        .await?;
+    let (n,): (i64,) =
+        sqlx::query_as("SELECT COUNT(*) FROM Jobs WHERE Status IN ('pending', 'in_progress') AND Type = $1")
+            .bind(&j.r#type)
+            .fetch_one(&mut *tx)
+            .await?;
     if n > 0 {
         return Ok(false);
     }
@@ -166,9 +167,8 @@ async fn save_once(app: &App, j: &Job) -> ApiResult<bool> {
     .execute(&mut *tx)
     .await;
     // isRepeatableError: a concurrent save won; nothing saved.
-    let repeatable = |e: &sqlx::Error| {
-        e.as_database_error().and_then(|d| d.code()).is_some_and(|c| c == "40001" || c == "40P01")
-    };
+    let repeatable =
+        |e: &sqlx::Error| e.as_database_error().and_then(|d| d.code()).is_some_and(|c| c == "40001" || c == "40P01");
     match r {
         Err(e) if repeatable(&e) => return Ok(false),
         Err(e) => return Err(e.into()),
@@ -187,7 +187,14 @@ pub async fn update_optimistically(app: &App, j: &Job, current: &str) -> ApiResu
         app,
         "LastActivityAt = $1, Status = $2, Data = $3::jsonb, Progress = $4",
         "Id = $5 AND Status = $6",
-        vec![json!(now_ms()), json!(j.status), json!(data_json(&j.data)), json!(j.progress), json!(j.id), json!(current)],
+        vec![
+            json!(now_ms()),
+            json!(j.status),
+            json!(data_json(&j.data)),
+            json!(j.progress),
+            json!(j.id),
+            json!(current),
+        ],
     )
     .await?;
     Ok(if r.len() == 1 { r.into_iter().next() } else { None })
@@ -195,8 +202,13 @@ pub async fn update_optimistically(app: &App, j: &Job, current: &str) -> ApiResu
 
 /// `Job.UpdateStatus`.
 async fn update_status(app: &App, id: &str, status: &str) -> ApiResult<Job> {
-    let r = update_returning(app, "Status = $1, LastActivityAt = $2", "Id = $3", vec![json!(status), json!(now_ms()), json!(id)])
-        .await?;
+    let r = update_returning(
+        app,
+        "Status = $1, LastActivityAt = $2",
+        "Id = $3",
+        vec![json!(status), json!(now_ms()), json!(id)],
+    )
+    .await?;
     if r.len() != 1 {
         return Err(AppError::not_found("app.job.update.app_error", "").detail(format!("Job not found id={id}")));
     }
@@ -211,8 +223,9 @@ async fn update_status_optimistically(app: &App, id: &str, current: &str, new: &
     } else {
         "LastActivityAt = $1, Status = $2"
     };
-    let r = update_returning(app, set, "Id = $3 AND Status = $4", vec![json!(now), json!(new), json!(id), json!(current)])
-        .await?;
+    let r =
+        update_returning(app, set, "Id = $3 AND Status = $4", vec![json!(now), json!(new), json!(id), json!(current)])
+            .await?;
     Ok(if r.len() == 1 { r.into_iter().next() } else { None })
 }
 
@@ -222,7 +235,10 @@ pub async fn get_job(app: &App, id: &str) -> ApiResult<Option<Job>> {
 }
 
 async fn count_pending(app: &App, t: &str) -> ApiResult<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM Jobs WHERE Status = 'pending' AND Type = $1").bind(t).fetch_one(&app.db).await?)
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM Jobs WHERE Status = 'pending' AND Type = $1")
+        .bind(t)
+        .fetch_one(&app.db)
+        .await?)
 }
 
 /// `GetLastSuccessfulJobByType` (`GetNewestJobByStatusesAndType`).
@@ -277,7 +293,9 @@ pub async fn cleanup(app: &App, expiry: i64, batch: i64) -> ApiResult<()> {
 fn new_job(t: &str, data: Option<Data>) -> ApiResult<Job> {
     let id = new_id();
     if crate::job_workers::worker(t).is_none() {
-        return Err(AppError::bad_request("model.job.is_valid.type.app_error", "Invalid job type").detail(format!("id={id}")));
+        return Err(
+            AppError::bad_request("model.job.is_valid.type.app_error", "Invalid job type").detail(format!("id={id}"))
+        );
     }
     Ok(Job { id, r#type: t.into(), create_at: now_ms(), status: PENDING.into(), data, ..Default::default() })
 }
@@ -304,9 +322,19 @@ fn event_permission(t: &str) -> Option<&'static str> {
         "elasticsearch_post_indexing" => "read_elasticsearch_post_indexing_job",
         "elasticsearch_post_aggregation" => "read_elasticsearch_post_aggregation_job",
         "ldap_sync" => "read_ldap_sync_job",
-        "migrations" | "plugins" | "product_notices" | "expiry_notify" | "active_users" | "import_process"
-        | "import_delete" | "export_process" | "export_delete" | "cloud" | "mobile_session_metadata"
-        | "extract_content" | "cleanup_expired_access_tokens" => "read_jobs",
+        "migrations"
+        | "plugins"
+        | "product_notices"
+        | "expiry_notify"
+        | "active_users"
+        | "import_process"
+        | "import_delete"
+        | "export_process"
+        | "export_delete"
+        | "cloud"
+        | "mobile_session_metadata"
+        | "extract_content"
+        | "cleanup_expired_access_tokens" => "read_jobs",
         "access_control_sync" => crate::perm::MANAGE_SYSTEM,
         "access_control_team_sync" => "manage_team_access_rules",
         _ => return None,
@@ -648,9 +676,19 @@ async fn create_permission(app: &App, s: &Session, j: &Job) -> Option<(bool, &'s
         "elasticsearch_post_indexing" => "create_elasticsearch_post_indexing_job",
         "elasticsearch_post_aggregation" => "create_elasticsearch_post_aggregation_job",
         "ldap_sync" => "create_ldap_sync_job",
-        "migrations" | "plugins" | "product_notices" | "expiry_notify" | "active_users" | "import_process"
-        | "import_delete" | "export_process" | "export_delete" | "cloud" | "extract_content"
-        | "cleanup_expired_access_tokens" | "notify_expiring_access_tokens" => "manage_jobs",
+        "migrations"
+        | "plugins"
+        | "product_notices"
+        | "expiry_notify"
+        | "active_users"
+        | "import_process"
+        | "import_delete"
+        | "export_process"
+        | "export_delete"
+        | "cloud"
+        | "extract_content"
+        | "cleanup_expired_access_tokens"
+        | "notify_expiring_access_tokens" => "manage_jobs",
         "access_control_team_sync" => {
             if app.has_perm(s, crate::perm::MANAGE_SYSTEM).await {
                 return Some((true, crate::perm::MANAGE_SYSTEM));
@@ -683,8 +721,17 @@ async fn manage_permission(app: &App, s: &Session, j: &Job) -> Option<(bool, &'s
         "elasticsearch_post_indexing" => "manage_elasticsearch_post_indexing_job",
         "elasticsearch_post_aggregation" => "manage_elasticsearch_post_aggregation_job",
         "ldap_sync" => "manage_ldap_sync_job",
-        "migrations" | "plugins" | "product_notices" | "expiry_notify" | "active_users" | "import_process"
-        | "import_delete" | "export_process" | "export_delete" | "cloud" | "extract_content"
+        "migrations"
+        | "plugins"
+        | "product_notices"
+        | "expiry_notify"
+        | "active_users"
+        | "import_process"
+        | "import_delete"
+        | "export_process"
+        | "export_delete"
+        | "cloud"
+        | "extract_content"
         | "cleanup_expired_access_tokens" => "manage_jobs",
         "access_control_sync" => crate::perm::MANAGE_SYSTEM,
         "access_control_team_sync" => {
@@ -731,10 +778,12 @@ fn require_job_id(id: &str) -> ApiResult<()> {
 
 /// `GetJob`.
 async fn job_or_404(app: &App, id: &str) -> ApiResult<Job> {
-    get_job(app, id)
-        .await
-        .map_err(|e| AppError::internal("app.job.get.app_error", e.detailed_error))?
-        .ok_or_else(|| AppError::not_found("app.job.get.app_error", "Unable to get the job.").detail(format!("Job not found id={id}")))
+    get_job(app, id).await.map_err(|e| AppError::internal("app.job.get.app_error", e.detailed_error))?.ok_or_else(
+        || {
+            AppError::not_found("app.job.get.app_error", "Unable to get the job.")
+                .detail(format!("Job not found id={id}"))
+        },
+    )
 }
 
 /// A `model.Job` decoded as Go's `json.NewDecoder(r.Body).Decode(&job)`: wrong types are errors, `null` and
@@ -759,7 +808,9 @@ fn decode_job(body: &[u8]) -> Result<Job, String> {
     let n = |k: &str| -> Result<i64, String> {
         match m.get(k) {
             None | Some(Value::Null) => Ok(0),
-            Some(Value::Number(n)) => n.as_i64().ok_or_else(|| format!("json: cannot unmarshal number into Go struct field Job.{k} of type int64")),
+            Some(Value::Number(n)) => n
+                .as_i64()
+                .ok_or_else(|| format!("json: cannot unmarshal number into Go struct field Job.{k} of type int64")),
             Some(_) => Err(format!("json: cannot unmarshal into Go struct field Job.{k} of type int64")),
         }
     };
@@ -826,7 +877,12 @@ async fn cancel(St(app): St<State>, Auth(s): Auth, Path(job_id): Path<String>) -
 }
 
 /// `updateJobStatus`.
-async fn update_job_status(St(app): St<State>, Auth(s): Auth, Path(job_id): Path<String>, body: Bytes) -> ApiResult<Json<Value>> {
+async fn update_job_status(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(job_id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     route_id(&format!("/api/v4/jobs/{job_id}/status"), &job_id)?;
     require_job_id(&job_id)?;
     // StringInterfaceFromJSON: anything but an object is empty.

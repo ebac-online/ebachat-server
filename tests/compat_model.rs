@@ -129,7 +129,7 @@ async fn post_written_by_rust_reads_in_go() {
         channel_id: channel.clone(),
         message: "written by rust".into(),
         props: sqlx::types::Json(props),
-        file_ids: JsonText(vec![]),
+        file_ids: FileIds::default(),
         filenames: JsonText(vec![]),
         ..Default::default()
     };

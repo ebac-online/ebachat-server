@@ -26,7 +26,7 @@ pub fn routes() -> Router<State> {
         .route("/api/v4/users/{user_id}/preferences", get(get_all).put(update))
         .route("/api/v4/users/{user_id}/preferences/delete", post(delete))
         .route("/api/v4/users/{user_id}/preferences/{category}", get(get_category))
-        .route("/api/v4/users/{user_id}/preferences/{category}/name/{name}", get(get_one))
+        .route("/api/v4/users/{user_id}/preferences/{category}/name/{preference_name}", get(get_one))
 }
 
 impl App {
@@ -121,7 +121,6 @@ impl App {
         let s = serde_json::to_string(prefs).unwrap();
         self.hub.publish(event, json!({ "preferences": s }), to_user());
     }
-
 }
 
 /// `Preference.PreUpdate`: invalid theme colours become white.
@@ -191,7 +190,10 @@ async fn add_favorite(tx: &mut sqlx::PgConnection, p: &Preference) -> ApiResult<
         .fetch_optional(&mut *tx)
         .await?;
     let Some((team,)) = team else {
-        return Err(AppError::internal("api.preference.update_preferences.update_sidebar.app_error", "channel not found"));
+        return Err(AppError::internal(
+            "api.preference.update_preferences.update_sidebar.app_error",
+            "channel not found",
+        ));
     };
     let ids: Vec<(String,)> = sqlx::query_as(
         "SELECT sc.Id FROM SidebarCategories sc
@@ -231,7 +233,11 @@ pub fn user_param(s: &Session, id: &str) -> ApiResult<String> {
 }
 
 /// `getPreferences`: `null` for a user without preferences (the store's nil slice).
-async fn get_all(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<String>) -> ApiResult<Json<Option<Vec<Preference>>>> {
+async fn get_all(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<Option<Vec<Preference>>>> {
     let user_id = user_param(&s, &user_id)?;
     app.require_user(&s, &user_id).await?;
     let p = app.preferences(&user_id).await?;

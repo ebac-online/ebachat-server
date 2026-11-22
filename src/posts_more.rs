@@ -149,7 +149,8 @@ async fn rewrite(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes) -> 
     }
     let known = ["custom", "shorten", "elaborate", "improve_writing", "fix_spelling", "simplify", "summarize"];
     if !r.message.is_empty() && !known.contains(&r.action.as_str()) {
-        return Err(AppError::bad_request("app.post.rewrite.invalid_action", "").detail(format!("invalid action: {}", r.action)));
+        return Err(AppError::bad_request("app.post.rewrite.invalid_action", "")
+            .detail(format!("invalid action: {}", r.action)));
     }
     let _ = (r.custom_prompt, s);
     Err(AppError::internal("app.post.rewrite.agent_call_failed", "the AI plugin is not available"))
@@ -306,7 +307,13 @@ async fn create_upload(St(app): St<State>, Auth(s): Auth, body: axum::body::Byte
         let day = chrono::DateTime::from_timestamp_millis(us.create_at)
             .map(|t| t.with_timezone(&chrono::Local).format("%Y%m%d").to_string())
             .unwrap_or_default();
-        us.path = format!("{day}/teams/noteam/channels/{}/users/{}/{}/{}", us.channel_id, us.user_id, us.id, base(&us.filename));
+        us.path = format!(
+            "{day}/teams/noteam/channels/{}/users/{}/{}/{}",
+            us.channel_id,
+            us.user_id,
+            us.id,
+            base(&us.filename)
+        );
     } else {
         let dir = app.cfg.str("ImportSettings.Directory").trim_end_matches('/').to_string();
         // filepath.Join: `./import` becomes `import`.
@@ -324,7 +331,10 @@ async fn create_upload(St(app): St<State>, Auth(s): Auth, body: axum::body::Byte
     }
     if us.kind == ATTACHMENT {
         let bad = |id: &str| AppError::bad_request(id, "").with_param("channelId", &us.channel_id);
-        let c = app.channel(&us.channel_id).await?.ok_or_else(|| bad("app.upload.create.incorrect_channel_id.app_error"))?;
+        let c = app
+            .channel(&us.channel_id)
+            .await?
+            .ok_or_else(|| bad("app.upload.create.incorrect_channel_id.app_error"))?;
         if c.delete_at != 0 {
             return Err(bad("app.upload.create.cannot_upload_to_deleted_channel.app_error"));
         }
@@ -355,7 +365,11 @@ async fn create_upload(St(app): St<State>, Auth(s): Auth, body: axum::body::Byte
 }
 
 /// `getUpload`: the uploader's own, or any for a system admin.
-async fn get_upload(St(app): St<State>, Auth(s): Auth, Path(upload_id): Path<String>) -> ApiResult<Json<UploadSession>> {
+async fn get_upload(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(upload_id): Path<String>,
+) -> ApiResult<Json<UploadSession>> {
     if !is_valid_id(&upload_id) {
         return Err(AppError::invalid_url_param("upload_id"));
     }
@@ -409,7 +423,8 @@ async fn upload_data(
             .ok_or_else(|| multipart_error("EOF".into()))?;
         read_limited(&mut field, left).await.map_err(multipart_error)?
     } else {
-        let len: Option<usize> = headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
+        let len: Option<usize> =
+            headers.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse().ok());
         if len.is_some_and(|l| l > left) {
             return Err(AppError::bad_request("api.upload.upload_data.invalid_content_length", ""));
         }
@@ -448,7 +463,9 @@ async fn read_limited(field: &mut multer::Field<'_>, max: usize) -> Result<Vec<u
 async fn write_part(app: &App, mut us: UploadSession, data: Vec<u8>) -> ApiResult<Option<FileInfo>> {
     let stored = app.upload_session(&us.id).await?;
     if stored.file_offset != us.file_offset {
-        return Err(AppError::bad_request("app.upload.upload_data.concurrent.app_error", "").detail("FileOffset mismatch"));
+        return Err(
+            AppError::bad_request("app.upload.upload_data.concurrent.app_error", "").detail("FileOffset mismatch")
+        );
     }
     let upload_path = if us.kind == IMPORT { format!("{}{INCOMPLETE}", us.path) } else { us.path.clone() };
     let written = data.len() as i64;
@@ -517,9 +534,10 @@ async fn write_part(app: &App, mut us: UploadSession, data: Vec<u8>) -> ApiResul
     }
     if us.kind == IMPORT {
         let bytes = app.files.read(&upload_path).await.map_err(storage)?;
-        app.files.write(&us.path, bytes).await.map_err(|e| {
-            AppError::internal("app.upload.upload_data.move_file.app_error", e.to_string())
-        })?;
+        app.files
+            .write(&us.path, bytes)
+            .await
+            .map_err(|e| AppError::internal("app.upload.upload_data.move_file.app_error", e.to_string()))?;
         let _ = app.files.remove(&upload_path).await;
     }
     file_api::save_file_info(app, &info).await?;

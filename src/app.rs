@@ -96,7 +96,13 @@ impl App {
         .bind(token)
         .fetch_optional(&self.db)
         .await?;
-        let missing = || AppError::new(StatusCode::UNAUTHORIZED, "app.user_access_token.invalid_or_missing", "Invalid or missing token.");
+        let missing = || {
+            AppError::new(
+                StatusCode::UNAUTHORIZED,
+                "app.user_access_token.invalid_or_missing",
+                "Invalid or missing token.",
+            )
+        };
         let Some((token_id, user_id, active, expires)) = t else { return Err(missing()) };
         if !active {
             return Err(missing());
@@ -111,7 +117,8 @@ impl App {
         if user.delete_at != 0 {
             return Err(missing());
         }
-        let mut s = Session { token: token.into(), user_id: user.id.clone(), roles: user.roles.clone(), ..Default::default() };
+        let mut s =
+            Session { token: token.into(), user_id: user.id.clone(), roles: user.roles.clone(), ..Default::default() };
         let p = &mut s.props.0;
         p.insert("user_access_token_id".into(), token_id);
         p.insert(session::PROP_TYPE.into(), session::TYPE_USER_ACCESS_TOKEN.into());
@@ -293,7 +300,11 @@ impl App {
     /// The channel or 404 as `GetChannel` answers.
     pub async fn channel_or_404(&self, id: &str) -> ApiResult<Arc<crate::model::Channel>> {
         self.channel(id).await?.ok_or_else(|| {
-            AppError::new(StatusCode::NOT_FOUND, "app.channel.get.existing.app_error", "Unable to find the existing channel.")
+            AppError::new(
+                StatusCode::NOT_FOUND,
+                "app.channel.get.existing.app_error",
+                "Unable to find the existing channel.",
+            )
         })
     }
 }
@@ -428,12 +439,20 @@ impl AppError {
         AppError::new(StatusCode::INTERNAL_SERVER_ERROR, id, "An internal error occurred.").detail(detail)
     }
     pub fn not_implemented(what: &str) -> AppError {
-        AppError::new(StatusCode::NOT_IMPLEMENTED, "api.not_implemented.app_error", &format!("{what} is not implemented."))
+        AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "api.not_implemented.app_error",
+            &format!("{what} is not implemented."),
+        )
     }
 }
 
 pub fn invalid_token() -> AppError {
-    AppError::new(StatusCode::UNAUTHORIZED, "api.context.session_expired.app_error", "Invalid or expired session, please login again.")
+    AppError::new(
+        StatusCode::UNAUTHORIZED,
+        "api.context.session_expired.app_error",
+        "Invalid or expired session, please login again.",
+    )
 }
 
 impl From<sqlx::Error> for AppError {
@@ -523,7 +542,11 @@ pub fn go_cookie(headers: &axum::http::HeaderMap, name: &str) -> Option<String> 
             if n.is_empty() || !n.iter().all(|b| token_byte(*b)) || n != name.as_bytes() {
                 continue;
             }
-            let v = if val.len() > 1 && val[0] == b'"' && val[val.len() - 1] == b'"' { &val[1..val.len() - 1] } else { val };
+            let v = if val.len() > 1 && val[0] == b'"' && val[val.len() - 1] == b'"' {
+                &val[1..val.len() - 1]
+            } else {
+                val
+            };
             if v.iter().all(|b| value_byte(*b)) {
                 return Some(String::from_utf8_lossy(v).into_owned());
             }
@@ -748,7 +771,9 @@ impl<T: serde::de::DeserializeOwned> axum::extract::FromRequest<State> for Body<
                 return Err(AppError::invalid_param("body").detail(e.to_string()));
             }
             if !blank && serde_json::from_slice::<serde_json::Value>(b).is_ok_and(|v| v.is_null()) {
-                return serde_json::from_slice(b"[]").map(Body).map_err(|e| AppError::invalid_param("body").detail(e.to_string()));
+                return serde_json::from_slice(b"[]")
+                    .map(Body)
+                    .map_err(|e| AppError::invalid_param("body").detail(e.to_string()));
             }
             Err(AppError::bad_request("api.payload.parse.error", "Error parsing the payload.").detail(e.to_string()))
         })
@@ -797,7 +822,9 @@ mod tests {
 
     fn cache(app: &App, kind: &str) -> String {
         let id = new_id();
-        app.caches.channel.put(id.clone(), Arc::new(Channel { id: id.clone(), r#type: kind.into(), ..Default::default() }));
+        app.caches
+            .channel
+            .put(id.clone(), Arc::new(Channel { id: id.clone(), r#type: kind.into(), ..Default::default() }));
         id
     }
 

@@ -13,12 +13,12 @@
 
 use std::collections::BTreeMap;
 
+use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, Request, State as St};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use serde::Deserialize;
 
 use crate::app::{ApiResult, App, AppError, MaybeAuth, State, decode_json, new_id, now_ms};
@@ -70,7 +70,11 @@ fn title(s: &str) -> String {
 /// `model.MapToJSON`: Go's `json.Marshal` of a string map (sorted keys, HTML characters escaped).
 pub fn go_map_json(m: &BTreeMap<String, String>) -> String {
     let s = serde_json::to_string(m).unwrap_or_default();
-    s.replace('<', "\\u003c").replace('>', "\\u003e").replace('&', "\\u0026").replace('\u{2028}', "\\u2028").replace('\u{2029}', "\\u2029")
+    s.replace('<', "\\u003c")
+        .replace('>', "\\u003e")
+        .replace('&', "\\u0026")
+        .replace('\u{2028}', "\\u2028")
+        .replace('\u{2029}', "\\u2029")
 }
 
 /// An error whose translation wants parameters Go did not pass: they print as `<no value>`.
@@ -121,13 +125,21 @@ impl App {
     /// `getSSOProvider`: GitLab is the only provider an unlicensed server registers.
     fn sso_provider(&self, service: &str) -> ApiResult<Sso> {
         let sso = self.sso_settings(service).filter(|s| s.enable).ok_or_else(|| {
-            no_value(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.user.authorize_oauth_user.unsupported.app_error", ""))
-                .detail(format!("service={service}"))
+            no_value(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.user.authorize_oauth_user.unsupported.app_error",
+                "",
+            ))
+            .detail(format!("service={service}"))
         })?;
         let provider = if sso.scope.contains("openid") { "openid" } else { service };
         if provider != "gitlab" {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.user.login_by_oauth.not_available.app_error", "")
-                .with_param("Service", &title(service)));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.user.login_by_oauth.not_available.app_error",
+                "",
+            )
+            .with_param("Service", &title(service)));
         }
         Ok(sso)
     }
@@ -245,7 +257,12 @@ impl App {
             is_mobile = true;
         }
         let ua = req.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
-        let mut s = Session { user_id: user.id.clone(), roles: user.roles.clone(), device_id: device_id.into(), ..Default::default() };
+        let mut s = Session {
+            user_id: user.id.clone(),
+            roles: user.roles.clone(),
+            device_id: device_id.into(),
+            ..Default::default()
+        };
         let p = &mut s.props.0;
         p.insert("isMobile".into(), is_mobile.to_string());
         p.insert("isSaml".into(), is_saml.to_string());
@@ -271,12 +288,13 @@ impl App {
         };
         if !device_id.is_empty() {
             // RevokeOtherSessionsForDeviceId
-            let old: Vec<(String, String)> = sqlx::query_as("SELECT Id, Token FROM Sessions WHERE UserId = $1 AND DeviceId = $2")
-                .bind(&user.id)
-                .bind(device_id)
-                .fetch_all(&self.db)
-                .await
-                .map_err(|e| internal(e.into()))?;
+            let old: Vec<(String, String)> =
+                sqlx::query_as("SELECT Id, Token FROM Sessions WHERE UserId = $1 AND DeviceId = $2")
+                    .bind(&user.id)
+                    .bind(device_id)
+                    .fetch_all(&self.db)
+                    .await
+                    .map_err(|e| internal(e.into()))?;
             for (id, token) in old {
                 let _ = self.revoke_session(&Session { id, token, ..Default::default() }).await;
             }
@@ -285,9 +303,10 @@ impl App {
         self.limit_sessions(&user.id).await.map_err(internal)?;
         self.save_session(&mut s).await.map_err(internal)?;
         self.clear_imported_inactive(user).await;
-        sqlx::query("UPDATE Users SET LastLogin = $1 WHERE Id = $2")
+        sqlx::query("UPDATE Users SET LastLogin = $1, UpdateAt = $3 WHERE Id = $2")
             .bind(s.create_at)
             .bind(&user.id)
+            .bind(now_ms())
             .execute(&self.db)
             .await
             .map_err(|e| AppError::internal("app.login.doLogin.updateLastLogin.error", e.to_string()))?;
@@ -317,11 +336,21 @@ impl App {
     }
 
     async fn user_by(&self, cond: &str, v: &str) -> Option<User> {
-        crate::users::query_users(self, "", cond, "", vec![crate::users::Arg::S(v.into())]).await.ok()?.into_iter().next()
+        crate::users::query_users(self, "", cond, "", vec![crate::users::Arg::S(v.into())])
+            .await
+            .ok()?
+            .into_iter()
+            .next()
     }
 
     /// `CreateOAuthUser`.
-    async fn create_oauth_user(&self, service: &str, info: &[u8], invite_token: &str, invite_id: &str) -> ApiResult<User> {
+    async fn create_oauth_user(
+        &self,
+        service: &str,
+        info: &[u8],
+        invite_token: &str,
+        invite_id: &str,
+    ) -> ApiResult<User> {
         if !self.cfg.bool("TeamSettings.EnableUserCreation") {
             return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.user.create_user.disabled.app_error", ""));
         }
@@ -359,7 +388,8 @@ impl App {
     /// `LoginByOAuth`.
     async fn login_by_oauth(&self, service: &str, info: &[u8], invite_token: &str, invite_id: &str) -> ApiResult<User> {
         self.sso_provider(service)?;
-        let parse = || AppError::bad_request("api.user.login_by_oauth.parse.app_error", "").with_param("Service", service);
+        let parse =
+            || AppError::bad_request("api.user.login_by_oauth.parse.app_error", "").with_param("Service", service);
         let auth_user = gitlab_user(info, self).map_err(|e| parse().detail(e))?;
         let auth = auth_user.auth_data.clone().unwrap_or_default();
         if auth.is_empty() {
@@ -370,7 +400,11 @@ impl App {
             Some(u) => u,
         };
         if user.is_bot {
-            return Err(AppError::new(StatusCode::FORBIDDEN, "api.user.login_by_oauth.bot_login_forbidden.app_error", ""));
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "api.user.login_by_oauth.bot_login_forbidden.app_error",
+                "",
+            ));
         }
         let user = self.update_oauth_user_attrs(user, auth_user).await?;
         if let Err(e) = self.add_user_to_team_by_invite_if_needed(&user, invite_token, invite_id).await {
@@ -421,11 +455,16 @@ impl App {
     }
 
     /// `AddUserToTeamByInviteIfNeeded`: a team invite token or invite id carried through the sign-in.
-    async fn add_user_to_team_by_invite_if_needed(&self, user: &User, invite_token: &str, invite_id: &str) -> ApiResult<()> {
+    async fn add_user_to_team_by_invite_if_needed(
+        &self,
+        user: &User,
+        invite_token: &str,
+        invite_id: &str,
+    ) -> ApiResult<()> {
         let team = if !invite_token.is_empty() {
-            let t = token_row(self, invite_token).await.ok_or_else(|| {
-                AppError::bad_request("api.user.create_user.signup_link_invalid.app_error", "")
-            })?;
+            let t = token_row(self, invite_token)
+                .await
+                .ok_or_else(|| AppError::bad_request("api.user.create_user.signup_link_invalid.app_error", ""))?;
             self.add_user_to_team_with_token(user, t).await?
         } else if !invite_id.is_empty() {
             let team = crate::teams::team_by_invite(self, invite_id).await?;
@@ -476,7 +515,8 @@ impl App {
         }
         self.join_user_to_team(&team, user, "").await?;
         if t.kind != "team_invitation" {
-            let ids: Vec<String> = data.get("channels").map(|c| c.split(' ').map(str::to_string).collect()).unwrap_or_default();
+            let ids: Vec<String> =
+                data.get("channels").map(|c| c.split(' ').map(str::to_string).collect()).unwrap_or_default();
             for id in ids {
                 if let Ok(Some(c)) = self.channel(&id).await
                     && let Err(e) = self.add_user_to_channel(user, &c, false).await
@@ -489,7 +529,6 @@ impl App {
         Ok(team)
     }
 
-
     /// `GenerateAndSaveDesktopToken`.
     async fn desktop_token(&self, user_id: &str) -> ApiResult<String> {
         let token = new_random_string(64);
@@ -501,7 +540,8 @@ impl App {
             .await;
         if let Err(e) = r {
             let _ = sqlx::query("DELETE FROM DesktopTokens WHERE UserId = $1").bind(user_id).execute(&self.db).await;
-            return Err(AppError::bad_request("app.desktop_token.generateServerToken.invalid_or_expired", "").detail(e.to_string()));
+            return Err(AppError::bad_request("app.desktop_token.generateServerToken.invalid_or_expired", "")
+                .detail(e.to_string()));
         }
         Ok(token)
     }
@@ -523,14 +563,33 @@ fn is_valid_username(s: &str) -> bool {
 /// `model.CleanUsername`.
 pub fn clean_username(username: &str) -> String {
     const RESERVED: &[&str] = &[
-        "admin", "api", "channel", "claim", "error", "files", "help", "landing", "login", "mfa", "oauth", "plug",
-        "plugins", "post", "signup", "boards", "playbooks",
+        "admin",
+        "api",
+        "channel",
+        "claim",
+        "error",
+        "files",
+        "help",
+        "landing",
+        "login",
+        "mfa",
+        "oauth",
+        "plug",
+        "plugins",
+        "post",
+        "signup",
+        "boards",
+        "playbooks",
     ];
     let mut s = username.replace(' ', "-").to_lowercase();
     if RESERVED.contains(&s.as_str()) {
         s.clear();
     }
-    let s: String = s.trim().chars().map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_') { c } else { '-' }).collect();
+    let s: String = s
+        .trim()
+        .chars()
+        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_') { c } else { '-' })
+        .collect();
     let s = s.trim_matches('-').to_string();
     if is_valid_username(&s) { s } else { format!("a{}", new_id()) }
 }
@@ -625,7 +684,8 @@ fn validate_web_auth_redirect(app: &App, redirect: &str) -> Result<(), String> {
     if u.scheme.is_empty() && u.host.is_empty() {
         return Ok(());
     }
-    let site = Url::parse(app.cfg.str("ServiceSettings.SiteURL")).map_err(|e| format!("failed to parse SiteURL from config: {e}"))?;
+    let site = Url::parse(app.cfg.str("ServiceSettings.SiteURL"))
+        .map_err(|e| format!("failed to parse SiteURL from config: {e}"))?;
     if u.scheme != site.scheme {
         return Err(format!("redirect URL scheme {:?} does not match site URL scheme {:?}", u.scheme, site.scheme));
     }
@@ -674,7 +734,10 @@ fn fully_qualified_redirect(site_prefix: &str, target: &str, schemes: &[String])
     {
         return target.into();
     }
-    if parsed.scheme == prefix.scheme && parsed.host == prefix.host && path_within_prefix(&parsed.path(), &prefix.path()) {
+    if parsed.scheme == prefix.scheme
+        && parsed.host == prefix.host
+        && path_within_prefix(&parsed.path(), &prefix.path())
+    {
         return target.into();
     } else if !parsed.scheme.is_empty() || !parsed.host.is_empty() {
         return site_prefix.into();
@@ -710,7 +773,12 @@ fn append_query_params(base: &str, params: &[(&str, &str)]) -> String {
 
 /// `template.HTMLEscapeString`.
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('\'', "&#39;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&#34;").replace('\0', "\u{FFFD}")
+    s.replace('&', "&amp;")
+        .replace('\'', "&#39;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&#34;")
+        .replace('\0', "\u{FFFD}")
 }
 
 /// `RenderMobileMessage`: a page the mobile app's browser shows, status 200.
@@ -785,7 +853,17 @@ async fn login(St(app): St<State>, MaybeAuth(s): MaybeAuth, Path(service): Path<
         return web_error(&app, &headers, AppError::bad_request("api.invalid_redirect_url", "").detail(e)).await;
     }
     match app
-        .oauth_login_endpoint(&headers, &service, ACTION_LOGIN, redirect_to, q.get("login_hint"), false, q.get("desktop_token"), q.get("t"), q.get("id"))
+        .oauth_login_endpoint(
+            &headers,
+            &service,
+            ACTION_LOGIN,
+            redirect_to,
+            q.get("login_hint"),
+            false,
+            q.get("desktop_token"),
+            q.get("t"),
+            q.get("id"),
+        )
         .await
     {
         Ok((url, cookie)) => {
@@ -797,7 +875,12 @@ async fn login(St(app): St<State>, MaybeAuth(s): MaybeAuth, Path(service): Path<
 }
 
 /// `mobileLoginWithOAuth`.
-async fn mobile_login(St(app): St<State>, MaybeAuth(s): MaybeAuth, Path(service): Path<String>, req: Request) -> Response {
+async fn mobile_login(
+    St(app): St<State>,
+    MaybeAuth(s): MaybeAuth,
+    Path(service): Path<String>,
+    req: Request,
+) -> Response {
     if !valid_service(&service) {
         return no_route(&app, &req).await;
     }
@@ -869,7 +952,9 @@ impl App {
         use base64::Engine;
         let sso = self.sso_provider(service).map_err(|e| Box::new((e, None)))?;
         let invalid = || AppError::bad_request("api.user.authorize_oauth_user.invalid_state.app_error", "");
-        let decoded = base64::engine::general_purpose::STANDARD.decode(state).map_err(|e| Box::new((invalid().detail(e.to_string()), None)))?;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(state)
+            .map_err(|e| Box::new((invalid().detail(e.to_string()), None)))?;
         let props: BTreeMap<String, String> = crate::app::map_from_json(&decoded).into_iter().collect();
         let fail = |e: AppError| Box::new((e, Some(props.clone())));
         let token = props.get("token").map(String::as_str).unwrap_or("");
@@ -891,7 +976,8 @@ impl App {
         let sub = crate::web::subpath(self.cfg.str("ServiceSettings.SiteURL"));
         *cleared_cookie = Some(format!("{COOKIE_OAUTH}=; Path={sub}; Max-Age=0; HttpOnly"));
 
-        let token_failed = |d: String| fail(AppError::internal("api.user.authorize_oauth_user.token_failed.app_error", d));
+        let token_failed =
+            |d: String| fail(AppError::internal("api.user.authorize_oauth_user.token_failed.app_error", d));
         let mut form = gourl::Values::default();
         form.set("client_id", &sso.id);
         form.set("client_secret", &sso.secret);
@@ -941,10 +1027,15 @@ impl App {
             return Err(fail(AppError::internal("api.user.authorize_oauth_user.bad_token.app_error", d)));
         }
         if ar.access_token.is_empty() {
-            return Err(fail(AppError::internal("api.user.authorize_oauth_user.missing.app_error", format!("response_body={body_s}"))));
+            return Err(fail(AppError::internal(
+                "api.user.authorize_oauth_user.missing.app_error",
+                format!("response_body={body_s}"),
+            )));
         }
         let service_err = |d: String| {
-            fail(AppError::internal("api.user.authorize_oauth_user.service.app_error", d).with_param("Service", service))
+            fail(
+                AppError::internal("api.user.authorize_oauth_user.service.app_error", d).with_param("Service", service),
+            )
         };
         let url = reqwest::Url::parse(&sso.user_api_endpoint).map_err(|e| service_err(e.to_string()))?;
         if !self.untrusted_url_allowed(&url) {
@@ -967,7 +1058,10 @@ impl App {
                 let host = Url::parse(&sso.user_api_endpoint).map(|u| u.hostname().to_string()).unwrap_or_default();
                 return Err(fail(AppError::bad_request("oauth.gitlab.tos.error", "").with_param("URL", &host)));
             }
-            return Err(fail(AppError::internal("api.user.authorize_oauth_user.response.app_error", format!("response_body={text}"))));
+            return Err(fail(AppError::internal(
+                "api.user.authorize_oauth_user.response.app_error",
+                format!("response_body={text}"),
+            )));
         }
         Ok((body, props))
     }
@@ -989,7 +1083,10 @@ impl App {
         if email.is_empty() {
             return Err(AppError::bad_request("api.user.complete_switch_with_oauth.blank_email.app_error", ""));
         }
-        let parse = || AppError::bad_request("api.user.complete_switch_with_oauth.parse.app_error", "").with_param("Service", service);
+        let parse = || {
+            AppError::bad_request("api.user.complete_switch_with_oauth.parse.app_error", "")
+                .with_param("Service", service)
+        };
         let sso_user = gitlab_user(info, self).map_err(|e| parse().detail(e))?;
         let auth = sso_user.auth_data.clone().unwrap_or_default();
         if auth.is_empty() {
@@ -1014,8 +1111,16 @@ impl App {
         .execute(&self.db)
         .await;
         if let Err(e) = r {
-            let id = if e.to_string().contains("email") { "app.user.update_auth_data.email_exists.app_error" } else { "app.user.update_auth_data.app_error" };
-            return Err(if id.contains("email_exists") { AppError::bad_request(id, "") } else { AppError::internal(id, e.to_string()) });
+            let id = if e.to_string().contains("email") {
+                "app.user.update_auth_data.email_exists.app_error"
+            } else {
+                "app.user.update_auth_data.app_error"
+            };
+            return Err(if id.contains("email_exists") {
+                AppError::bad_request(id, "")
+            } else {
+                AppError::internal(id, e.to_string())
+            });
         }
         self.invalidate_user(&user.id);
         let method = format!("{} SSO", title(service));
@@ -1038,7 +1143,12 @@ fn redact_token_response(body: &str) -> String {
 }
 
 /// `completeOAuth`: the provider's callback.
-async fn complete(St(app): St<State>, MaybeAuth(cur): MaybeAuth, Path(service): Path<String>, req: Request) -> Response {
+async fn complete(
+    St(app): St<State>,
+    MaybeAuth(cur): MaybeAuth,
+    Path(service): Path<String>,
+    req: Request,
+) -> Response {
     if !valid_service(&service) {
         return no_route(&app, &req).await;
     }
@@ -1046,11 +1156,21 @@ async fn complete(St(app): St<State>, MaybeAuth(cur): MaybeAuth, Path(service): 
     let q = query(&req);
     let svc = title(&service);
     if q.get("error") == "access_denied" {
-        return render_web_error(&app, StatusCode::TEMPORARY_REDIRECT, &[("type", "oauth_access_denied"), ("service", &svc)]).await;
+        return render_web_error(
+            &app,
+            StatusCode::TEMPORARY_REDIRECT,
+            &[("type", "oauth_access_denied"), ("service", &svc)],
+        )
+        .await;
     }
     let code = q.get("code");
     if code.is_empty() {
-        return render_web_error(&app, StatusCode::TEMPORARY_REDIRECT, &[("type", "oauth_missing_code"), ("service", &svc)]).await;
+        return render_web_error(
+            &app,
+            StatusCode::TEMPORARY_REDIRECT,
+            &[("type", "oauth_missing_code"), ("service", &svc)],
+        )
+        .await;
     }
     let site = site_url_header(&app, &headers);
     let uri = format!("{site}/signup/{service}/complete");
@@ -1118,7 +1238,10 @@ async fn complete(St(app): St<State>, MaybeAuth(cur): MaybeAuth, Path(service): 
         let mut h = HeaderMap::new();
         let is_oauth = matches!(user.auth_service.as_str(), "gitlab" | "google" | "office365" | "openid");
         let mobile_with_redirect = is_mobile && has_redirect;
-        let s = match app.login_session(&headers, &mut h, &user, "", is_mobile, is_oauth, false, !mobile_with_redirect).await {
+        let s = match app
+            .login_session(&headers, &mut h, &user, "", is_mobile, is_oauth, false, !mobile_with_redirect)
+            .await
+        {
             Ok(s) => s,
             Err(e) => return finish(render_error(e).await),
         };
@@ -1182,11 +1305,16 @@ async fn one_time_link(St(app): St<State>, MaybeAuth(s): MaybeAuth, req: Request
     let headers = req.headers().clone();
     let site = site_url_header(&app, &headers);
     if !app.cfg.bool("GuestAccountsSettings.EnableGuestMagicLink") {
-        let to = format!("{site}/login?extra=login_error&message={}", crate::web::html_escape("Magic link is disabled"));
+        let to =
+            format!("{site}/login?extra=login_error&message={}", crate::web::html_escape("Magic link is disabled"));
         return redirect(StatusCode::FOUND, &to, "application/json");
     }
     if s.is_some_and(|s| !s.user_id.is_empty()) {
-        return redirect(StatusCode::FOUND, &format!("{site}/error?type=magic_link_already_logged_in"), "application/json");
+        return redirect(
+            StatusCode::FOUND,
+            &format!("{site}/error?type=magic_link_already_logged_in"),
+            "application/json",
+        );
     }
     let q = query(&req);
     let token = q.get("t");
@@ -1220,7 +1348,11 @@ async fn one_time_link(St(app): St<State>, MaybeAuth(s): MaybeAuth, req: Request
         Err(e) => return web_app_error(e).await,
     };
     crate::audit::log_user(&app, Some(&session), &user.id, "success - guest_magic_link").await;
-    let to = if redirect_to.is_empty() { site.clone() } else { fully_qualified_redirect(&site, &redirect_to, &custom_schemes(&app)) };
+    let to = if redirect_to.is_empty() {
+        site.clone()
+    } else {
+        fully_qualified_redirect(&site, &redirect_to, &custom_schemes(&app))
+    };
     let mut r = redirect(StatusCode::FOUND, &to, "application/json");
     r.headers_mut().extend(h);
     r
@@ -1308,12 +1440,13 @@ pub async fn login_with_desktop_token(app: &State, headers: &HeaderMap, body: &[
     let token = props.get("token").cloned().unwrap_or_default();
     let device_id = props.get("device_id").cloned().unwrap_or_default();
     let invalid = || AppError::new(StatusCode::UNAUTHORIZED, "app.desktop_token.validate.invalid", "");
-    let found: Option<(String,)> = sqlx::query_as("SELECT UserId FROM DesktopTokens WHERE Token = $1 AND CreateAt >= $2")
-        .bind(&token)
-        .bind(now_ms() / 1000 - 3 * 60)
-        .fetch_optional(&app.db)
-        .await
-        .unwrap_or(None);
+    let found: Option<(String,)> =
+        sqlx::query_as("SELECT UserId FROM DesktopTokens WHERE Token = $1 AND CreateAt >= $2")
+            .bind(&token)
+            .bind(now_ms() / 1000 - 3 * 60)
+            .fetch_optional(&app.db)
+            .await
+            .unwrap_or(None);
     let Some((user_id,)) = found else {
         let _ = sqlx::query("DELETE FROM DesktopTokens WHERE Token = $1").bind(&token).execute(&app.db).await;
         return Err(invalid());
@@ -1346,7 +1479,12 @@ pub async fn login_with_desktop_token(app: &State, headers: &HeaderMap, body: &[
 }
 
 /// `SwitchEmailToOAuth` after the password check: the provider's authorize URL (and its cookie).
-pub async fn switch_email_to_oauth(app: &App, headers: &HeaderMap, email: &str, service: &str) -> ApiResult<(String, Option<String>)> {
+pub async fn switch_email_to_oauth(
+    app: &App,
+    headers: &HeaderMap,
+    email: &str,
+    service: &str,
+) -> ApiResult<(String, Option<String>)> {
     if service == "saml" {
         let token = new_random_string(64);
         sqlx::query("INSERT INTO Tokens (Token, CreateAt, Type, Extra) VALUES ($1, $2, 'saml', $3)")
@@ -1386,6 +1524,9 @@ mod tests {
         assert_eq!(fully_qualified_redirect("http://h:1", "http://evil/x", &s), "http://h:1");
         assert_eq!(fully_qualified_redirect("http://h:1", "mmauth://callback", &s), "mmauth://callback");
         assert_eq!(fully_qualified_redirect("http://h:1", "", &s), "http://h:1");
-        assert_eq!(append_query_params("http://h/login/desktop", &[("server_token", "s"), ("client_token", "c")]), "http://h/login/desktop?client_token=c&server_token=s");
+        assert_eq!(
+            append_query_params("http://h/login/desktop", &[("server_token", "s"), ("client_token", "c")]),
+            "http://h/login/desktop?client_token=c&server_token=s"
+        );
     }
 }

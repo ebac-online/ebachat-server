@@ -259,7 +259,8 @@ pub fn service_environment() -> &'static str {
 /// `verifyLicenseSignature`: RSA PKCS#1 v1.5 over SHA-512. `Ok(false)` is a signature mismatch.
 fn verify(pem: &str, digest: &[u8], sig: &[u8]) -> Result<bool, String> {
     use rsa::pkcs8::DecodePublicKey;
-    let key = rsa::PublicKey::from_public_key_pem(pem).map_err(|e| format!("encountered error parsing public key: {e}"))?;
+    let key =
+        rsa::PublicKey::from_public_key_pem(pem).map_err(|e| format!("encountered error parsing public key: {e}"))?;
     Ok(key.verify(rsa::Pkcs1v15Sign::new::<rsa::sha2::Sha512>(), digest, sig).is_ok())
 }
 
@@ -284,7 +285,8 @@ pub fn validate(signed: &[u8]) -> Result<String, Invalid> {
     use sha2::Digest;
     let digest = sha2::Sha512::digest(plain);
     let env = service_environment();
-    let (primary, alternate) = if env == "production" { (PRODUCTION_KEY, TEST_KEY) } else { (TEST_KEY, PRODUCTION_KEY) };
+    let (primary, alternate) =
+        if env == "production" { (PRODUCTION_KEY, TEST_KEY) } else { (TEST_KEY, PRODUCTION_KEY) };
     if !verify(primary, &digest, sig).map_err(Invalid::Bad)? {
         if verify(alternate, &digest, sig).map_err(Invalid::Bad)? {
             return Err(if env == "production" { Invalid::TestInProduction } else { Invalid::ProductionInTest });
@@ -297,10 +299,20 @@ pub fn validate(signed: &[u8]) -> Result<String, Invalid> {
 /// `NewLicenseValidationAppError`.
 fn validation_error(e: Invalid) -> AppError {
     match e {
-        Invalid::ProductionInTest => AppError::bad_request("api.license.add_license.wrong_environment_production.app_error", "")
-            .detail("license is a production license but the server is running in a test or development service environment"),
-        Invalid::TestInProduction => AppError::bad_request("api.license.add_license.wrong_environment_test.app_error", "")
-            .detail("license is a test or development license but the server is running in a production service environment"),
+        Invalid::ProductionInTest => AppError::bad_request(
+            "api.license.add_license.wrong_environment_production.app_error",
+            "",
+        )
+        .detail(
+            "license is a production license but the server is running in a test or development service environment",
+        ),
+        Invalid::TestInProduction => AppError::bad_request(
+            "api.license.add_license.wrong_environment_test.app_error",
+            "",
+        )
+        .detail(
+            "license is a test or development license but the server is running in a production service environment",
+        ),
         Invalid::Bad(d) => AppError::bad_request("api.license.add_license.invalid.app_error", "").detail(d),
     }
 }
@@ -373,7 +385,11 @@ pub async fn load(app: &App) -> bool {
         .unwrap_or_default();
     if !crate::app::is_valid_id(&id) {
         let loc = app.cfg.str("ServiceSettings.LicenseFileLocation");
-        let file = if loc.is_empty() { crate::logs::find_dir("config").join("mattermost.mattermost-license") } else { loc.into() };
+        let file = if loc.is_empty() {
+            crate::logs::find_dir("config").join("mattermost.mattermost-license")
+        } else {
+            loc.into()
+        };
         match std::fs::read(&file) {
             Err(e) => crate::logs::warn(
                 "Failed to get license from disk",
@@ -383,7 +399,9 @@ pub async fn load(app: &App) -> bool {
                 None => crate::logs::warn("Failed to get license from disk", &[("error", "invalid license".into())]),
                 Some(l) => match save(app, &b).await {
                     Ok(_) => id = l.id,
-                    Err(e) => crate::logs::error("Failed to save license key loaded from disk.", &[("error", e.id.into())]),
+                    Err(e) => {
+                        crate::logs::error("Failed to save license key loaded from disk.", &[("error", e.id.into())])
+                    }
                 },
             },
         }
@@ -415,7 +433,8 @@ pub async fn load(app: &App) -> bool {
 async fn save(app: &App, bytes: &[u8]) -> ApiResult<License> {
     let s = validate(bytes).map_err(validation_error)?;
     let mut license = unmarshal(&s)?;
-    let invalid = |d: &str| AppError::bad_request("api.license.add_license.invalid.app_error", "").detail(d.to_string());
+    let invalid =
+        |d: &str| AppError::bad_request("api.license.add_license.invalid.app_error", "").detail(d.to_string());
     let Some(f) = &license.features else { return Err(invalid("license.Features is nil")) };
     let Some(users) = f.users else { return Err(invalid("license.Features.Users is nil")) };
     let count: i64 = sqlx::query_scalar(
@@ -453,14 +472,16 @@ async fn save(app: &App, bytes: &[u8]) -> ApiResult<License> {
     };
     let saved = match record_err {
         Some(id) => Err(AppError::bad_request(id, "")),
-        None => sqlx::query("INSERT INTO Licenses (Id, CreateAt, Bytes) VALUES ($1, $2, $3) ON CONFLICT (Id) DO NOTHING")
-            .bind(&license.id)
-            .bind(now_ms())
-            .bind(String::from_utf8_lossy(bytes).as_ref())
-            .execute(&app.db)
-            .await
-            .map(|_| ())
-            .map_err(|e| AppError::internal("api.license.add_license.save.app_error", e.to_string())),
+        None => {
+            sqlx::query("INSERT INTO Licenses (Id, CreateAt, Bytes) VALUES ($1, $2, $3) ON CONFLICT (Id) DO NOTHING")
+                .bind(&license.id)
+                .bind(now_ms())
+                .bind(String::from_utf8_lossy(bytes).as_ref())
+                .execute(&app.db)
+                .await
+                .map(|_| ())
+                .map_err(|e| AppError::internal("api.license.add_license.save.app_error", e.to_string()))
+        }
     };
     if let Err(e) = saved {
         let _ = remove(app).await;
@@ -490,10 +511,12 @@ async fn remove(app: &App) -> ApiResult<()> {
         return Ok(());
     }
     crate::logs::info("Remove license.", &[("id", "ActiveLicenseId".into())]);
-    sqlx::query("INSERT INTO Systems (Name, Value) VALUES ('ActiveLicenseId', '') ON CONFLICT (Name) DO UPDATE SET Value = ''")
-        .execute(&app.db)
-        .await
-        .map_err(|e| AppError::internal("app.system.save.app_error", e.to_string()))?;
+    sqlx::query(
+        "INSERT INTO Systems (Name, Value) VALUES ('ActiveLicenseId', '') ON CONFLICT (Name) DO UPDATE SET Value = ''",
+    )
+    .execute(&app.db)
+    .await
+    .map_err(|e| AppError::internal("app.system.save.app_error", e.to_string()))?;
     set_license(app, None);
     reloaded_caches(app);
     Ok(())
@@ -507,7 +530,8 @@ async fn license_file(app: &App, headers: &HeaderMap, body: Body) -> ApiResult<(
     let ct = headers.get(header::CONTENT_TYPE).and_then(|v| v.to_str().ok()).unwrap_or("");
     let boundary = multer::parse_boundary(ct).map_err(|e| parse_err(e.to_string()))?;
     let max = app.cfg.i64("FileSettings.MaxFileSize").max(0) as u64;
-    let constraints = multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(max.saturating_add(10 << 20)));
+    let constraints =
+        multer::Constraints::new().size_limit(multer::SizeLimit::new().whole_stream(max.saturating_add(10 << 20)));
     let mut mp = multer::Multipart::with_constraints(body.into_data_stream(), boundary, constraints);
     let mut found: Option<(Vec<u8>, String)> = None;
     loop {

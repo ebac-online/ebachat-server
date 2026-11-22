@@ -47,7 +47,9 @@ impl App {
     pub async fn save_reaction(&self, mut r: Reaction) -> ApiResult<Reaction> {
         r.emoji_name = r.emoji_name.to_lowercase();
         let post = self.single_post(&r.post_id, false).await?;
-        if !is_system_emoji(&r.emoji_name) && self.emojis_by_names(std::slice::from_ref(&r.emoji_name)).await?.is_empty() {
+        if !is_system_emoji(&r.emoji_name)
+            && self.emojis_by_names(std::slice::from_ref(&r.emoji_name)).await?.is_empty()
+        {
             return Err(AppError::not_found("app.emoji.get_by_name.no_result", "Unable to find the emoji."));
         }
         let exists: bool = sqlx::query_scalar(
@@ -58,17 +60,26 @@ impl App {
         .fetch_one(&self.db)
         .await?;
         if !exists {
-            let n: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT EmojiName) FROM Reactions WHERE PostId = $1 AND DeleteAt = 0")
-                .bind(&r.post_id)
-                .fetch_one(&self.db)
-                .await?;
+            let n: i64 = sqlx::query_scalar(
+                "SELECT COUNT(DISTINCT EmojiName) FROM Reactions WHERE PostId = $1 AND DeleteAt = 0",
+            )
+            .bind(&r.post_id)
+            .fetch_one(&self.db)
+            .await?;
             if n >= self.cfg.i64("ServiceSettings.UniqueEmojiReactionLimitPerPost") {
-                return Err(AppError::bad_request("app.reaction.save.save.too_many_reactions", "Reaction limit has been reached for this post."));
+                return Err(AppError::bad_request(
+                    "app.reaction.save.save.too_many_reactions",
+                    "Reaction limit has been reached for this post.",
+                ));
             }
         }
         let c = self.channel_or_404(&post.channel_id).await?;
         if c.delete_at > 0 {
-            return Err(AppError::new(StatusCode::FORBIDDEN, "api.reaction.save.archived_channel.app_error", "You cannot react in an archived channel."));
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "api.reaction.save.archived_channel.app_error",
+                "You cannot react in an archived channel.",
+            ));
         }
         r.channel_id = post.channel_id.clone();
         // Reaction.PreSave
@@ -125,7 +136,11 @@ impl App {
         let post = self.single_post(&r.post_id, false).await?;
         let c = self.channel_or_404(&post.channel_id).await?;
         if c.delete_at > 0 {
-            return Err(AppError::new(StatusCode::FORBIDDEN, "api.reaction.delete.archived_channel.app_error", "You cannot remove a reaction in an archived channel."));
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "api.reaction.delete.archived_channel.app_error",
+                "You cannot remove a reaction in an archived channel.",
+            ));
         }
         let now = now_ms();
         r.update_at = now;
@@ -165,7 +180,11 @@ async fn save_reaction(St(app): St<State>, Auth(s): Auth, Body(r): Body<Reaction
         return Err(AppError::bad_request("api.reaction.save_reaction.invalid.app_error", "Reaction is not valid."));
     }
     if r.user_id != s.user_id {
-        return Err(AppError::new(StatusCode::FORBIDDEN, "api.reaction.save_reaction.user_id.app_error", "You cannot save reaction for the other user."));
+        return Err(AppError::new(
+            StatusCode::FORBIDDEN,
+            "api.reaction.save_reaction.user_id.app_error",
+            "You cannot save reaction for the other user.",
+        ));
     }
     if !app.post_channel_perm(&s, &r.post_id, perm::ADD_REACTION).await? {
         return Err(AppError::forbidden_perm(perm::ADD_REACTION));

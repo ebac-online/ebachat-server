@@ -74,7 +74,8 @@ pub fn escaped_to_html(text: &str, site_url: &str) -> String {
             c => esc.push(c),
         }
     }
-    let abs = REL_LINK.replace_all(&esc, |c: &regex::Captures| format!("[{}]({}{})", &c[1], site_url, &c[2])).into_owned();
+    let abs =
+        REL_LINK.replace_all(&esc, |c: &regex::Captures| format!("[{}]({}{})", &c[1], site_url, &c[2])).into_owned();
     let clean = BLOCKQUOTE.replace_all(&abs, "$1>").into_owned();
     let mut opts = Options::default();
     opts.extension.strikethrough = true;

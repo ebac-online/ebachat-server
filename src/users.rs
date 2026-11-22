@@ -5,8 +5,8 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -135,8 +135,24 @@ async fn with_terms(app: &App, u: &mut User) -> ApiResult<()> {
     Ok(())
 }
 
-/// `getUser` (and `/users/me`): one's own record in full, others' as the privacy settings allow.
-async fn one_user(app: &App, s: &Session, u: Arc<User>) -> ApiResult<Json<User>> {
+/// `User.Etag` under the privacy settings.
+fn user_etag(app: &App, u: &User) -> String {
+    format!(
+        "{}.{}.{}.{}.{}.{}.{}.{}",
+        crate::SERVER_VERSION,
+        u.id,
+        u.update_at,
+        u.terms_of_service_id,
+        u.terms_of_service_create_at,
+        app.cfg.bool("PrivacySettings.ShowFullName"),
+        app.cfg.bool("PrivacySettings.ShowEmailAddress"),
+        u.bot_last_icon_update
+    )
+}
+
+/// `getUser` (and `/users/me`): one's own record in full, others' as the privacy settings allow; 304 when the
+/// client has this version.
+async fn one_user(app: &App, s: &Session, u: Arc<User>, headers: &HeaderMap) -> ApiResult<Response> {
     if !app.can_see_user(s, &u.id).await? {
         return Err(AppError::forbidden_perm(crate::perm::VIEW_MEMBERS));
     }
@@ -145,36 +161,40 @@ async fn one_user(app: &App, s: &Session, u: Arc<User>) -> ApiResult<Json<User>>
     if show.admin || s.user_id == u.id {
         with_terms(app, &mut u).await?;
     }
+    let etag = user_etag(app, &u);
+    if let Some(r) = crate::teams::not_modified(headers, &etag) {
+        return Ok(r);
+    }
     if u.id == s.user_id {
         u.sanitize_own();
     } else {
         u.sanitize_profile(show);
     }
-    Ok(Json(u))
+    Ok(crate::teams::with_etag(Json(u), &etag))
 }
 
-async fn get_me(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<User>> {
+async fn get_me(St(app): St<State>, Auth(s): Auth, headers: HeaderMap) -> ApiResult<Response> {
     let u = app.user(&s.user_id).await?.ok_or_else(missing_account)?;
-    one_user(&app, &s, u).await
+    one_user(&app, &s, u, &headers).await
 }
 
-/// `getUser`: the session's activity recorded on success, as Go does (`UpdateLastActivityAtIfNeeded`), which the idle
-/// session timeout and the last-activity column of the system console read.
-async fn get_user(St(app): St<State>, Auth(s): Auth, id: Path<String>) -> ApiResult<Json<User>> {
-    let r = get_user_inner(St(app.clone()), Auth(s.clone()), id).await;
-    if r.is_ok() {
+/// `getUser`: the session's activity recorded when the user is sent (`UpdateLastActivityAtIfNeeded`),
+/// which the idle session timeout and the last-activity column of the system console read.
+async fn get_user(St(app): St<State>, Auth(s): Auth, id: Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+    let r = get_user_inner(&app, &s, id, &headers).await;
+    if r.as_ref().is_ok_and(|r| r.status() == StatusCode::OK) {
         app.touch_session(&s).await;
     }
     r
 }
 
-async fn get_user_inner(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) -> ApiResult<Json<User>> {
+async fn get_user_inner(app: &App, s: &Session, Path(id): Path<String>, headers: &HeaderMap) -> ApiResult<Response> {
     let id = s.resolve(&id);
     if !is_valid_id(&id) {
         return Err(AppError::invalid_url_param("user_id"));
     }
     let u = app.user(&id).await?.ok_or_else(missing_account)?;
-    one_user(&app, &s, u).await
+    one_user(app, s, u, headers).await
 }
 
 /// A missing user under view restrictions is a permission error (`getUserByUsername`, `getUserByEmail`).
@@ -186,18 +206,31 @@ async fn missing_or_restricted(app: &App, s: &Session, missing: AppError) -> App
     }
 }
 
-async fn get_by_username(St(app): St<State>, Auth(s): Auth, Path(name): Path<String>) -> ApiResult<Json<User>> {
+async fn get_by_username(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(name): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
     if !crate::user_edit::valid_username(&name) {
         return Err(AppError::invalid_param("username"));
     }
     let Some(u) = load_user_by(&app, "u.username = $1", &name).await? else {
-        let missing = AppError::not_found("app.user.get_by_username.app_error", "Unable to find an existing account matching your username for this team. This team may require an invite from the team owner to join.");
+        let missing = AppError::not_found(
+            "app.user.get_by_username.app_error",
+            "Unable to find an existing account matching your username for this team. This team may require an invite from the team owner to join.",
+        );
         return Err(missing_or_restricted(&app, &s, missing).await);
     };
-    one_user(&app, &s, Arc::new(u)).await
+    one_user(&app, &s, Arc::new(u), &headers).await
 }
 
-async fn get_by_email(St(app): St<State>, Auth(s): Auth, Path(email): Path<String>) -> ApiResult<Json<User>> {
+async fn get_by_email(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(email): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
     let email = email.to_lowercase();
     if !crate::user_edit::valid_email(&email) {
         return Err(AppError::invalid_url_param("email"));
@@ -212,9 +245,13 @@ async fn get_by_email(St(app): St<State>, Auth(s): Auth, Path(email): Path<Strin
     if !app.can_see_user(&s, &u.id).await? {
         return Err(AppError::forbidden_perm(crate::perm::VIEW_MEMBERS));
     }
+    let etag = user_etag(&app, &u);
+    if let Some(r) = crate::teams::not_modified(&headers, &etag) {
+        return Ok(r);
+    }
     let mut u = u;
     u.sanitize_profile(show);
-    Ok(Json(u))
+    Ok(crate::teams::with_etag(Json(u), &etag))
 }
 
 #[derive(Deserialize)]
@@ -343,7 +380,8 @@ fn login_error(app: &App, e: AppError) -> AppError {
             "Enter a valid email or username and/or password, or sign in using another method.",
         );
     }
-    let (u, m) = (app.cfg.bool("EmailSettings.EnableSignInWithUsername"), app.cfg.bool("EmailSettings.EnableSignInWithEmail"));
+    let (u, m) =
+        (app.cfg.bool("EmailSettings.EnableSignInWithUsername"), app.cfg.bool("EmailSettings.EnableSignInWithEmail"));
     let id = match (u, m) {
         (true, false) => "api.user.login.invalid_credentials_username",
         (false, true) => "api.user.login.invalid_credentials_email",
@@ -377,10 +415,16 @@ async fn do_login(app: &State, cur: Option<&Session>, headers: &HeaderMap, b: Lo
     let unauthorized = |id: &str, m: &str| AppError::new(StatusCode::UNAUTHORIZED, id, m);
     // Guests need a license; remote users cannot log in here.
     if user.is_guest() {
-        return Err(unauthorized("api.user.login.guest_accounts.license.error", "Guest accounts are disabled by the current license."));
+        return Err(unauthorized(
+            "api.user.login.guest_accounts.license.error",
+            "Guest accounts are disabled by the current license.",
+        ));
     }
     if user.remote_id.as_deref().is_some_and(|r| !r.is_empty()) {
-        return Err(unauthorized("api.user.login.remote_users.login.error", "Login failed because remote users are not allow to log in."));
+        return Err(unauthorized(
+            "api.user.login.remote_users.login.error",
+            "Login failed because remote users are not allow to log in.",
+        ));
     }
     crate::audit::log_user(app, cur, &user.id, "authenticated").await;
     let (r, s) = start_session(app, headers, &b, user).await?;
@@ -393,8 +437,14 @@ async fn authenticate(app: &State, b: &LoginBody) -> ApiResult<User> {
     if b.password.is_empty() {
         return Err(AppError::bad_request("api.user.login.blank_pwd.app_error", "Password field must not be blank"));
     }
-    let not_found = || AppError::bad_request("store.sql_user.get_for_login.app_error", "Unable to find an existing account matching your credentials.");
-    let (by_name, by_email) = (app.cfg.bool("EmailSettings.EnableSignInWithUsername"), app.cfg.bool("EmailSettings.EnableSignInWithEmail"));
+    let not_found = || {
+        AppError::bad_request(
+            "store.sql_user.get_for_login.app_error",
+            "Unable to find an existing account matching your credentials.",
+        )
+    };
+    let (by_name, by_email) =
+        (app.cfg.bool("EmailSettings.EnableSignInWithUsername"), app.cfg.bool("EmailSettings.EnableSignInWithEmail"));
     if !by_name && !by_email {
         return Err(not_found());
     }
@@ -416,7 +466,9 @@ async fn authenticate(app: &State, b: &LoginBody) -> ApiResult<User> {
     }
     if !user.auth_service.is_empty() {
         let service = if user.auth_service == "saml" { "SAML".to_string() } else { user.auth_service.clone() };
-        return Err(AppError::bad_request("api.user.login.use_auth_service.app_error", "").with_param("AuthService", &service));
+        return Err(
+            AppError::bad_request("api.user.login.use_auth_service.app_error", "").with_param("AuthService", &service)
+        );
     }
     if let Err(mut e) = app.check_password_and_all_criteria(&user.id, &b.password, &b.token).await {
         e.status_code = StatusCode::UNAUTHORIZED.as_u16();
@@ -430,7 +482,12 @@ async fn authenticate(app: &State, b: &LoginBody) -> ApiResult<User> {
 async fn start_session(app: &State, headers: &HeaderMap, b: &LoginBody, user: User) -> ApiResult<(Response, Session)> {
     let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
     let mobile = !b.device_id.is_empty() || crate::user_agent::is_mobile(ua);
-    let mut s = Session { user_id: user.id.clone(), roles: user.roles.clone(), device_id: b.device_id.clone(), ..Default::default() };
+    let mut s = Session {
+        user_id: user.id.clone(),
+        roles: user.roles.clone(),
+        device_id: b.device_id.clone(),
+        ..Default::default()
+    };
     let p = &mut s.props.0;
     p.insert("isMobile".into(), mobile.to_string());
     p.insert("isSaml".into(), "false".into());
@@ -462,7 +519,12 @@ async fn start_session(app: &State, headers: &HeaderMap, b: &LoginBody, user: Us
     }
     app.save_session(&mut s).await?;
     app.clear_imported_inactive(&user).await;
-    sqlx::query("UPDATE Users SET LastLogin = $1 WHERE Id = $2").bind(s.create_at).bind(&user.id).execute(&app.db).await?;
+    sqlx::query("UPDATE Users SET LastLogin = $1, UpdateAt = $3 WHERE Id = $2")
+        .bind(s.create_at)
+        .bind(&user.id)
+        .bind(now_ms())
+        .execute(&app.db)
+        .await?;
     app.invalidate_user(&user.id);
 
     // Go answers with the user as read before the checks (FailedAttempts not yet reset, LastLogin not yet set),

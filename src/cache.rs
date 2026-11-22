@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::model::{
-    Channel, Emoji, FileInfo, Reaction, Role, Scheme, Session, Status, StringMap, User,
-};
+use crate::model::{Channel, Emoji, FileInfo, Reaction, Role, Scheme, Session, Status, StringMap, User};
 
 /// An LRU of `size` entries that also drop `ttl` after they were put, as Go's `cache.LRU`.
 pub struct Lru<K: Hash + Eq, V> {

@@ -142,7 +142,10 @@ impl Encoder {
 
 /// Paths whose Go handlers are not wrapped, or that compress on their own.
 fn unwrapped(path: &str) -> bool {
-    path.starts_with("/static/") || path == "/_documentation" || path == "/robots.txt" || path == "/unsupported_browser.js"
+    path.starts_with("/static/")
+        || path == "/_documentation"
+        || path == "/robots.txt"
+        || path == "/unsupported_browser.js"
 }
 
 /// The middleware for the wrapped routes (`from_fn`), installed only in "gzip" mode.
@@ -167,7 +170,8 @@ async fn compress(r: Response, enc: Enc) -> Response {
     if !ct.is_empty() && !content_type_ok(ct) {
         return r;
     }
-    let declared = h.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
+    let declared =
+        h.get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok()).unwrap_or(0);
     if declared != 0 && declared < MIN_SIZE {
         return r;
     }

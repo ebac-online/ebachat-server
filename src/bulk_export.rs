@@ -65,7 +65,8 @@ type Raw = Box<serde_json::value::RawValue>;
 
 /// A value as Go's JSON, kept verbatim.
 fn raw<T: Serialize>(v: &T) -> Raw {
-    serde_json::value::RawValue::from_string(String::from_utf8(go_json(v)).unwrap_or_default()).unwrap_or_else(|_| raw_null())
+    serde_json::value::RawValue::from_string(String::from_utf8(go_json(v)).unwrap_or_default())
+        .unwrap_or_else(|_| raw_null())
 }
 
 fn raw_null() -> Raw {
@@ -228,7 +229,10 @@ impl Serialize for PostData {
         if self.direct {
             o = o.f("reactions", &self.reactions).f("replies", &self.replies).f("attachments", &self.attachments);
         } else {
-            o = o.o("reactions", self.reactions.as_ref()).o("replies", self.replies.as_ref()).o("attachments", self.attachments.as_ref());
+            o = o
+                .o("reactions", self.reactions.as_ref())
+                .o("replies", self.replies.as_ref())
+                .o("attachments", self.attachments.as_ref());
         }
         o = o.f("is_pinned", self.is_pinned).o("thread_followers", self.thread_followers.as_ref());
         o.serialize(s)
@@ -256,7 +260,11 @@ impl serde_json::ser::Formatter for GoFormatter {
         }
         w.write_all(&fragment.as_bytes()[start..])
     }
-    fn write_char_escape<W: ?Sized + std::io::Write>(&mut self, w: &mut W, e: serde_json::ser::CharEscape) -> std::io::Result<()> {
+    fn write_char_escape<W: ?Sized + std::io::Write>(
+        &mut self,
+        w: &mut W,
+        e: serde_json::ser::CharEscape,
+    ) -> std::io::Result<()> {
         use serde_json::ser::CharEscape::*;
         let s = match e {
             Quote => "\\\"".to_string(),
@@ -293,7 +301,9 @@ impl Out {
     fn line(&mut self, l: &Line) -> Res<()> {
         let mut b = go_json(l);
         b.push(b'\n');
-        self.zip.write_all(&b).map_err(|e| jobs::go_error("BulkExport", "app.export.export_write_line.io_writer.error", &e.to_string()))
+        self.zip
+            .write_all(&b)
+            .map_err(|e| jobs::go_error("BulkExport", "app.export.export_write_line.io_writer.error", &e.to_string()))
     }
 }
 
@@ -367,10 +377,16 @@ struct Opts {
 /// `BulkExport`.
 async fn bulk_export(app: &App, job: &mut Job, out: &mut Out, o: &Opts) -> Res<()> {
     if !o.channels.is_empty() && o.teams.is_empty() {
-        return Err(jobs::go_error("BulkExport", "app.export.channel_requires_team.error", "ChannelName requires TeamName to be set"));
+        return Err(jobs::go_error(
+            "BulkExport",
+            "app.export.channel_requires_team.error",
+            "ChannelName requires TeamName to be set",
+        ));
     }
     let deflate = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-    out.zip.start_file("import.jsonl", deflate).map_err(|e| jobs::go_error("BulkExport", "app.export.zip_create.error", &e.to_string()))?;
+    out.zip
+        .start_file("import.jsonl", deflate)
+        .map_err(|e| jobs::go_error("BulkExport", "app.export.zip_create.error", &e.to_string()))?;
     job.data_mut();
     let mut c = Ctx { app, job };
     export_version(out, &o.teams, &o.channels)?;
@@ -424,12 +440,18 @@ async fn bulk_export(app: &App, job: &mut Job, out: &mut Out, o: &Opts) -> Res<(
 
 /// `exportFile`: stored, under `data/`.
 async fn export_file(app: &App, out: &mut Out, path: &str) -> Res<()> {
-    let data = app.files.read(path).await.map_err(|e| jobs::go_error("ReadFile", "api.file.read_file.app_error", &e.to_string()))?;
+    let data = app
+        .files
+        .read(path)
+        .await
+        .map_err(|e| jobs::go_error("ReadFile", "api.file.read_file.app_error", &e.to_string()))?;
     let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-    out.zip
-        .start_file(format!("data/{}", crate::files::clean(path)), stored)
-        .map_err(|e| jobs::go_error("exportFileAttachment", "app.export.export_attachment.zip_create_header.error", &e.to_string()))?;
-    out.zip.write_all(&data).map_err(|e| jobs::go_error("exportFileAttachment", "app.export.export_attachment.copy_file.error", &e.to_string()))
+    out.zip.start_file(format!("data/{}", crate::files::clean(path)), stored).map_err(|e| {
+        jobs::go_error("exportFileAttachment", "app.export.export_attachment.zip_create_header.error", &e.to_string())
+    })?;
+    out.zip.write_all(&data).map_err(|e| {
+        jobs::go_error("exportFileAttachment", "app.export.export_attachment.copy_file.error", &e.to_string())
+    })
 }
 
 /// `exportVersion`.
@@ -484,7 +506,22 @@ async fn export_roles_and_schemes(c: &mut Ctx<'_>, out: &mut Out) -> Res<()> {
     for scope in ["team", "channel"] {
         let mut cnt = 0;
         loop {
-            type S = (String, String, String, String, String, String, String, String, String, String, String, String, String, String);
+            type S = (
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+                String,
+            );
             let page: Vec<S> = sqlx::query_as(
                 "SELECT COALESCE(Name, ''), COALESCE(DisplayName, ''), COALESCE(Description, ''), COALESCE(Scope, ''),
                  COALESCE(DefaultTeamAdminRole, ''), COALESCE(DefaultTeamUserRole, ''), COALESCE(DefaultTeamGuestRole, ''),
@@ -557,7 +594,8 @@ fn team_line(name: &str, display: &str, t: &str, desc: &str, open: bool, scheme:
 /// `exportAllTeams`: the teams asked for, or every team not deleted.
 async fn export_teams(c: &mut Ctx<'_>, out: &mut Out, filters: &[String]) -> Res<HashSet<String>> {
     type T = (String, String, String, String, String, bool, i64, Option<String>);
-    const Q: &str = "SELECT t.Id, t.Name, COALESCE(t.DisplayName, ''), COALESCE(t.Type::text, ''), COALESCE(t.Description, ''),
+    const Q: &str =
+        "SELECT t.Id, t.Name, COALESCE(t.DisplayName, ''), COALESCE(t.Type::text, ''), COALESCE(t.Description, ''),
         COALESCE(t.AllowOpenInvite, false), t.DeleteAt, s.Name FROM Teams t LEFT JOIN Schemes s ON t.SchemeId = s.Id";
     let mut names = HashSet::new();
     if !filters.is_empty() {
@@ -603,7 +641,13 @@ async fn export_teams(c: &mut Ctx<'_>, out: &mut Out, filters: &[String]) -> Res
 }
 
 /// `exportAllChannels`: public and private channels of the exported teams.
-async fn export_channels(c: &mut Ctx<'_>, out: &mut Out, teams: &HashSet<String>, archived: bool, filters: &[String]) -> Res<()> {
+async fn export_channels(
+    c: &mut Ctx<'_>,
+    out: &mut Out,
+    teams: &HashSet<String>,
+    archived: bool,
+    filters: &[String],
+) -> Res<()> {
     type Ch = (String, String, String, String, String, String, i64, String, Option<String>);
     let (mut after, mut cnt) = (ZERO.to_string(), 0);
     let wanted: HashSet<&String> = filters.iter().collect();
@@ -715,7 +759,23 @@ async fn channel_ids(app: &App, table: &str, team: &str, channel: &str, archived
     ids(app, &sql, &[team, channel], "exportAllUsers", id).await
 }
 
-type UserRow = (String, String, String, String, Option<String>, String, String, String, String, String, String, i64, String, String, bool);
+type UserRow = (
+    String,
+    String,
+    String,
+    String,
+    Option<String>,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    i64,
+    String,
+    String,
+    bool,
+);
 
 /// `exportAllUsers`: every user (bots apart), with preferences, notify props, custom status and memberships;
 /// for scoped exports only users related to the scope, with memberships synthesized for post authors who left.
@@ -739,7 +799,8 @@ async fn export_users(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
                 .fetch_optional(&app.db)
                 .await
                 .map_err(db("exportAllUsers", "app.team.get_by_name.app_error"))?;
-            let team_id = team_id.ok_or_else(|| jobs::go_error("exportAllUsers", "app.team.get_by_name.app_error", ""))?;
+            let team_id =
+                team_id.ok_or_else(|| jobs::go_error("exportAllUsers", "app.team.get_by_name.app_error", ""))?;
             for ch in &o.channels {
                 let sql = format!(
                     "SELECT Id FROM Channels WHERE TeamId = $1 AND Name = $2{}",
@@ -754,14 +815,43 @@ async fn export_users(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
                 else {
                     continue;
                 };
-                let members = ids(app, "SELECT UserId FROM ChannelMembers WHERE ChannelId = $1", &[&cid], "exportAllUsers", "app.channel.get_member_ids.app_error").await?;
+                let members = ids(
+                    app,
+                    "SELECT UserId FROM ChannelMembers WHERE ChannelId = $1",
+                    &[&cid],
+                    "exportAllUsers",
+                    "app.channel.get_member_ids.app_error",
+                )
+                .await?;
                 related.extend(members.iter().cloned());
                 members_by_channel.insert((t.clone(), ch.clone()), members.into_iter().collect());
-                let authors = channel_ids(app, "Posts", t, ch, o.archived, "app.post.get_author_ids_for_channel.app_error").await?;
+                let authors =
+                    channel_ids(app, "Posts", t, ch, o.archived, "app.post.get_author_ids_for_channel.app_error")
+                        .await?;
                 related.extend(authors.iter().cloned());
                 authors_by_channel.insert((t.clone(), ch.clone()), authors.into_iter().collect());
-                related.extend(channel_ids(app, "Reactions", t, ch, o.archived, "app.reaction.get_author_ids_for_channel.app_error").await?);
-                related.extend(channel_ids(app, "ThreadMemberships", t, ch, o.archived, "app.thread.get_follower_ids_for_channel.app_error").await?);
+                related.extend(
+                    channel_ids(
+                        app,
+                        "Reactions",
+                        t,
+                        ch,
+                        o.archived,
+                        "app.reaction.get_author_ids_for_channel.app_error",
+                    )
+                    .await?,
+                );
+                related.extend(
+                    channel_ids(
+                        app,
+                        "ThreadMemberships",
+                        t,
+                        ch,
+                        o.archived,
+                        "app.thread.get_follower_ids_for_channel.app_error",
+                    )
+                    .await?,
+                );
             }
         }
     }
@@ -807,14 +897,27 @@ async fn export_users(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
                     }
                     let in_channel = |ch: &String| {
                         let k = (t.clone(), ch.clone());
-                        authors_by_channel.get(&k).is_some_and(|s| s.contains(&u.0)) || members_by_channel.get(&k).is_some_and(|s| s.contains(&u.0))
+                        authors_by_channel.get(&k).is_some_and(|s| s.contains(&u.0))
+                            || members_by_channel.get(&k).is_some_and(|s| s.contains(&u.0))
                     };
-                    let author = authors_by_team.get(t).is_some_and(|s| s.contains(&u.0)) || o.channels.iter().any(in_channel);
+                    let author =
+                        authors_by_team.get(t).is_some_and(|s| s.contains(&u.0)) || o.channels.iter().any(in_channel);
                     if !author {
                         continue;
                     }
-                    let synth: Vec<Obj> = o.channels.iter().filter(|ch| in_channel(ch)).map(|ch| Obj::new().f("name", ch).f("roles", "channel_user")).collect();
-                    members.push((t.clone(), Obj::new().f("name", t).f("roles", "team_user").o("channels", (!synth.is_empty()).then_some(synth))));
+                    let synth: Vec<Obj> = o
+                        .channels
+                        .iter()
+                        .filter(|ch| in_channel(ch))
+                        .map(|ch| Obj::new().f("name", ch).f("roles", "channel_user"))
+                        .collect();
+                    members.push((
+                        t.clone(),
+                        Obj::new()
+                            .f("name", t)
+                            .f("roles", "team_user")
+                            .o("channels", (!synth.is_empty()).then_some(synth)),
+                    ));
                 }
             }
             user.teams = Some((!members.is_empty()).then(|| members.into_iter().map(|m| m.1).collect()));
@@ -826,11 +929,12 @@ async fn export_users(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
 
 /// `importLineFromUser` with the exportable preferences, notify props and custom status.
 async fn user_data(app: &App, u: &UserRow) -> Res<UserData> {
-    let prefs: Vec<(String, String, String)> = sqlx::query_as("SELECT Category, Name, COALESCE(Value, '') FROM Preferences WHERE UserId = $1")
-        .bind(&u.0)
-        .fetch_all(&app.db)
-        .await
-        .map_err(db("GetPreferencesForUser", "app.preference.get_all.app_error"))?;
+    let prefs: Vec<(String, String, String)> =
+        sqlx::query_as("SELECT Category, Name, COALESCE(Value, '') FROM Preferences WHERE UserId = $1")
+            .bind(&u.0)
+            .fetch_all(&app.db)
+            .await
+            .map_err(db("GetPreferencesForUser", "app.preference.get_all.app_error"))?;
     let mut p: HashMap<&'static str, Option<String>> = HashMap::new();
     for (cat, name, mut value) in prefs {
         let name = if cat == "tutorial_step" { String::new() } else { name };
@@ -852,11 +956,14 @@ async fn user_data(app: &App, u: &UserRow) -> Res<UserData> {
     let notify: BTreeMap<String, String> = serde_json::from_str(&u.13).unwrap_or_default();
     let np = |k: &str| notify.get(k).cloned();
     let props: BTreeMap<String, String> = serde_json::from_str(&u.12).unwrap_or_default();
-    let custom = props.get("customStatus").and_then(|s| serde_json::from_str::<Option<serde_json::Map<String, Value>>>(s).ok().flatten()).map(|m| {
-        let s = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let exp = m.get("expires_at").and_then(Value::as_str).unwrap_or("0001-01-01T00:00:00Z").to_string();
-        Obj::new().f("emoji", s("emoji")).f("text", s("text")).f("duration", s("duration")).f("expires_at", exp)
-    });
+    let custom = props
+        .get("customStatus")
+        .and_then(|s| serde_json::from_str::<Option<serde_json::Map<String, Value>>>(s).ok().flatten())
+        .map(|m| {
+            let s = |k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+            let exp = m.get("expires_at").and_then(Value::as_str).unwrap_or("0001-01-01T00:00:00Z").to_string();
+            Obj::new().f("emoji", s("emoji")).f("text", s("text")).f("duration", s("duration")).f("expires_at", exp)
+        });
     Ok(UserData {
         username: u.1.clone(),
         email: u.2.clone(),
@@ -904,7 +1011,13 @@ async fn user_data(app: &App, u: &UserRow) -> Res<UserData> {
 }
 
 /// `buildUserTeamAndChannelMemberships`: (team name, membership) of teams not left, with the channels.
-async fn memberships(app: &App, user_id: &str, archived: bool, teams: &[String], channels: &[String]) -> Res<Vec<(String, Obj)>> {
+async fn memberships(
+    app: &App,
+    user_id: &str,
+    archived: bool,
+    teams: &[String],
+    channels: &[String],
+) -> Res<Vec<(String, Obj)>> {
     type TM = (String, String, String, i64, bool, Option<bool>, Option<bool>);
     let tms: Vec<TM> = sqlx::query_as(
         "SELECT tm.TeamId, t.Name, COALESCE(tm.Roles, ''), tm.DeleteAt, (tm.SchemeGuest IS NOT NULL AND tm.SchemeGuest), tm.SchemeUser, tm.SchemeAdmin
@@ -985,14 +1098,22 @@ async fn memberships(app: &App, user_id: &str, archived: bool, teams: &[String],
                     .f("last_viewed_at", m.3),
             );
         }
-        let theme: Option<String> = sqlx::query_scalar("SELECT Value FROM Preferences WHERE UserId = $1 AND Category = 'theme' AND Name = $2")
-            .bind(user_id)
-            .bind(&team_id)
-            .fetch_optional(&app.db)
-            .await
-            .ok()
-            .flatten();
-        out.push((team_name.clone(), Obj::new().f("name", &team_name).f("roles", r.join(" ")).o("theme", theme).f("channels", (!chans.is_empty()).then_some(chans))));
+        let theme: Option<String> =
+            sqlx::query_scalar("SELECT Value FROM Preferences WHERE UserId = $1 AND Category = 'theme' AND Name = $2")
+                .bind(user_id)
+                .bind(&team_id)
+                .fetch_optional(&app.db)
+                .await
+                .ok()
+                .flatten();
+        out.push((
+            team_name.clone(),
+            Obj::new()
+                .f("name", &team_name)
+                .f("roles", r.join(" "))
+                .o("theme", theme)
+                .f("channels", (!chans.is_empty()).then_some(chans)),
+        ));
     }
     Ok(out)
 }
@@ -1006,7 +1127,10 @@ async fn export_bots(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<String
         let mut s = HashSet::new();
         for t in &o.teams {
             for ch in &o.channels {
-                s.extend(channel_ids(app, "Posts", t, ch, o.archived, "app.post.get_author_ids_for_channel.app_error").await?);
+                s.extend(
+                    channel_ids(app, "Posts", t, ch, o.archived, "app.post.get_author_ids_for_channel.app_error")
+                        .await?,
+                );
             }
         }
         authors = Some(s);
@@ -1106,7 +1230,9 @@ async fn export_posts(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
                 // An empty list without reactions; Go's nil slice (null) when the reactors are all gone.
                 let reactions = if p.9 { nil_if_empty(reactions(c.app, &p.0).await?) } else { raw(&Vec::<Obj>::new()) };
                 let files = if has_files(&p.10) { Some(post_files(c.app, &p.0).await?) } else { None };
-                if o.attachments && let Some(f) = &files {
+                if o.attachments
+                    && let Some(f) = &files
+                {
                     attachments.extend(f.iter().cloned());
                 }
                 let post = PostData {
@@ -1134,7 +1260,13 @@ async fn export_posts(c: &mut Ctx<'_>, out: &mut Out, o: &Opts) -> Res<Vec<Strin
 }
 
 /// `GetParentsForExportAfter`: the next page of root posts (skipping pages whose channels are all excluded).
-async fn parents_for_export(app: &App, after: &str, archived: bool, team: &str, channel: &str) -> Res<Vec<(PostRow, String, String)>> {
+async fn parents_for_export(
+    app: &App,
+    after: &str,
+    archived: bool,
+    team: &str,
+    channel: &str,
+) -> Res<Vec<(PostRow, String, String)>> {
     let mut after = after.to_string();
     let mut cond = "Teams.DeleteAt = 0".to_string();
     if !archived {
@@ -1177,7 +1309,24 @@ async fn parents_for_export(app: &App, after: &str, archived: bool, team: &str, 
              p.HasReactions, p.FileIds, p.DeleteAt, Users.Username, Teams.Name, Channels.Name ORDER BY p.Id",
             shift(&cond).replace("$3", "$2").replace("$4", "$3")
         );
-        type Full = (String, String, String, String, String, String, i64, i64, bool, bool, String, i64, String, String, String, String);
+        type Full = (
+            String,
+            String,
+            String,
+            String,
+            String,
+            String,
+            i64,
+            i64,
+            bool,
+            bool,
+            String,
+            i64,
+            String,
+            String,
+            String,
+            String,
+        );
         let mut q = sqlx::query_as::<_, Full>(sqlx::AssertSqlSafe(sql)).bind(&root_ids);
         for b in [team, channel].into_iter().filter(|b| !b.is_empty()) {
             q = q.bind(b);
@@ -1275,11 +1424,12 @@ async fn post_files(app: &App, post_id: &str) -> Res<Vec<String>> {
 async fn export_emoji(c: &mut Ctx<'_>, out: &mut Out) -> Res<Vec<String>> {
     let (mut page, mut cnt, mut paths) = (0i64, 0, vec![]);
     loop {
-        let list: Vec<(String, String)> = sqlx::query_as("SELECT Id, Name FROM Emoji WHERE DeleteAt = 0 ORDER BY Name LIMIT 100 OFFSET $1")
-            .bind(page * 100)
-            .fetch_all(&c.app.db)
-            .await
-            .map_err(db("GetEmojiList", "app.emoji.get_list.internal_error"))?;
+        let list: Vec<(String, String)> =
+            sqlx::query_as("SELECT Id, Name FROM Emoji WHERE DeleteAt = 0 ORDER BY Name LIMIT 100 OFFSET $1")
+                .bind(page * 100)
+                .fetch_all(&c.app.db)
+                .await
+                .map_err(db("GetEmojiList", "app.emoji.get_list.internal_error"))?;
         if list.is_empty() {
             break;
         }
@@ -1478,7 +1628,8 @@ async fn export_direct_posts(c: &mut Ctx<'_>, out: &mut Out, with_files: bool, a
         for (ch, u) in &members {
             by_channel.entry(ch.as_str()).or_default().push(u.clone());
         }
-        let skipped: HashSet<String> = c.job.get("skipped_direct_channels").unwrap_or("").split(',').map(str::to_string).collect();
+        let skipped: HashSet<String> =
+            c.job.get("skipped_direct_channels").unwrap_or("").split(',').map(str::to_string).collect();
         for p in posts {
             after = p.0.clone();
             if p.11 != 0 || skipped.contains(&p.2) {
@@ -1532,7 +1683,11 @@ pub fn routes() -> Router<State> {
 
 /// `ListExportDirectory` / `ListDirectory`: the base names in a directory.
 async fn base_names(app: &App, dir: &str) -> ApiResult<Vec<String>> {
-    let entries = app.files.list(dir).await.map_err(|e| AppError::internal("api.file.list_directory.app_error", e.to_string()))?;
+    let entries = app
+        .files
+        .list(dir)
+        .await
+        .map_err(|e| AppError::internal("api.file.list_directory.app_error", e.to_string()))?;
     Ok(entries.into_iter().map(|(p, _)| p.rsplit('/').next().unwrap_or(&p).to_string()).collect())
 }
 
@@ -1578,15 +1733,9 @@ async fn download_export(St(app): St<State>, Auth(s): Auth, Path(name): Path<Str
     if !app.files.exists(&p).await {
         return Err(AppError::not_found("api.export.export_not_found.app_error", "Unable to find export file."));
     }
-    let data = app.files.read(&p).await.map_err(|e| AppError::internal("api.file.read_file.app_error", e.to_string()))?;
-    Ok((
-        StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/zip".to_string()),
-        ],
-        data,
-    )
-        .into_response())
+    let data =
+        app.files.read(&p).await.map_err(|e| AppError::internal("api.file.read_file.app_error", e.to_string()))?;
+    Ok((StatusCode::OK, [(header::CONTENT_TYPE, "application/zip".to_string())], data).into_response())
 }
 
 /// `listImports`: the files of the import directory, without incomplete uploads.

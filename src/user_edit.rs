@@ -7,8 +7,8 @@
 
 use std::collections::BTreeMap;
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -106,9 +106,7 @@ pub fn check_user(u: &User) -> ApiResult<()> {
 
 /// `SanitizeUnicode`: no bidi controls or zero-width characters.
 pub fn sanitize_unicode(s: &str) -> String {
-    s.chars()
-        .filter(|c| !matches!(*c as u32, 0x200B..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF))
-        .collect()
+    s.chars().filter(|c| !matches!(*c as u32, 0x200B..=0x200F | 0x202A..=0x202E | 0x2066..=0x2069 | 0xFEFF)).collect()
 }
 
 /// `SetDefaultNotifications`.
@@ -161,7 +159,8 @@ pub(crate) fn pre_update(u: &mut User) {
 
 /// `CheckEmailDomain`: one of the space-separated domains, or any when none.
 pub fn email_domain_ok(email: &str, domains: &str) -> bool {
-    let d: Vec<String> = domains.to_lowercase().replace(['@', ','], " ").split_whitespace().map(str::to_string).collect();
+    let d: Vec<String> =
+        domains.to_lowercase().replace(['@', ','], " ").split_whitespace().map(str::to_string).collect();
     d.is_empty() || d.iter().any(|d| email.to_lowercase().ends_with(&format!("@{d}")))
 }
 
@@ -237,7 +236,10 @@ impl App {
         if user.email != old.email && !directory {
             let restrict = self.cfg.str("TeamSettings.RestrictCreationToDomains");
             if !email_domain_ok(&user.email, restrict) && !old.is_guest() {
-                return Err(AppError::bad_request("api.user.update_user.accepted_domain.app_error", "Email is not from an accepted domain."));
+                return Err(AppError::bad_request(
+                    "api.user.update_user.accepted_domain.app_error",
+                    "Email is not from an accepted domain.",
+                ));
             }
             let restrict = self.cfg.str("GuestAccountsSettings.RestrictCreationToDomains");
             if !email_domain_ok(&user.email, restrict) && old.is_guest() {
@@ -251,9 +253,15 @@ impl App {
         let mut new_email = String::new();
         if user.email != old.email && self.cfg.bool("EmailSettings.RequireEmailVerification") {
             new_email = user.email.clone();
-            let taken: Option<i32> = sqlx::query_scalar("SELECT 1 FROM Users WHERE Email = lower($1)").bind(&new_email).fetch_optional(&self.db).await?;
+            let taken: Option<i32> = sqlx::query_scalar("SELECT 1 FROM Users WHERE Email = lower($1)")
+                .bind(&new_email)
+                .fetch_optional(&self.db)
+                .await?;
             if taken.is_some() {
-                return Err(AppError::bad_request("app.user.save.email_exists.app_error", "An account with that email already exists."));
+                return Err(AppError::bad_request(
+                    "app.user.save.email_exists.app_error",
+                    "An account with that email already exists.",
+                ));
             }
             if !user.is_bot {
                 user.email = old.email.clone();
@@ -371,10 +379,16 @@ impl App {
         if let Err(e) = r {
             let m = e.to_string();
             if m.contains("username") {
-                return Err(AppError::bad_request("app.user.save.username_exists.app_error", "An account with that username already exists."));
+                return Err(AppError::bad_request(
+                    "app.user.save.username_exists.app_error",
+                    "An account with that username already exists.",
+                ));
             }
             if m.contains("email") {
-                return Err(AppError::bad_request("app.user.save.email_exists.app_error", "An account with that email already exists."));
+                return Err(AppError::bad_request(
+                    "app.user.save.email_exists.app_error",
+                    "An account with that email already exists.",
+                ));
             }
             return Err(AppError::internal("app.user.update.finding.app_error", m));
         }
@@ -400,26 +414,39 @@ impl App {
         );
         let mut own = u.clone();
         own.sanitize_own();
-        self.hub.publish("user_updated", json!({ "user": own }), Broadcast { user_id: u.id.clone(), ..Default::default() });
+        self.hub.publish(
+            "user_updated",
+            json!({ "user": own }),
+            Broadcast { user_id: u.id.clone(), ..Default::default() },
+        );
     }
 
     /// `DoubleCheckPassword`: a password attempt that counts toward the lockout.
     pub async fn double_check_password(&self, u: &User, password: &str) -> ApiResult<()> {
         let max = self.cfg.i64("ServiceSettings.MaximumLoginAttempts") as i32;
-        let claimed = sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts + 1 WHERE Id = $1 AND FailedAttempts < $2")
-            .bind(&u.id)
-            .bind(max)
-            .execute(&self.db)
-            .await?
-            .rows_affected()
-            == 1;
+        let claimed =
+            sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts + 1 WHERE Id = $1 AND FailedAttempts < $2")
+                .bind(&u.id)
+                .bind(max)
+                .execute(&self.db)
+                .await?
+                .rows_affected()
+                == 1;
         self.invalidate_user(&u.id);
         if !claimed {
-            return Err(AppError::new(StatusCode::UNAUTHORIZED, "api.user.check_user_login_attempts.too_many.app_error", ""));
+            return Err(AppError::new(
+                StatusCode::UNAUTHORIZED,
+                "api.user.check_user_login_attempts.too_many.app_error",
+                "",
+            ));
         }
         match password::check(&u.password, password).await {
             password::Check::Mismatch => {
-                return Err(AppError::new(StatusCode::UNAUTHORIZED, "api.user.check_user_password.invalid.app_error", ""));
+                return Err(AppError::new(
+                    StatusCode::UNAUTHORIZED,
+                    "api.user.check_user_password.invalid.app_error",
+                    "",
+                ));
             }
             password::Check::MatchOld => self.store_password(&u.id, &password::hash(password).await).await?,
             password::Check::Match => {}
@@ -544,8 +571,12 @@ async fn patch_user(
     // CheckProviderAttributes: a user of any login provider keeps its username (LDAP and SAML have no further
     // checks without a license).
     if !old.auth_service.is_empty() && patch.username.as_ref().is_some_and(|n| *n != old.username) {
-        return Err(AppError::new(StatusCode::CONFLICT, "api.user.patch_user.login_provider_attribute_set.app_error", "")
-            .with_param("Field", "username"));
+        return Err(AppError::new(
+            StatusCode::CONFLICT,
+            "api.user.patch_user.login_provider_attribute_set.app_error",
+            "",
+        )
+        .with_param("Field", "username"));
     }
     if let Some(e) = &patch.email
         && *e != old.email
@@ -569,8 +600,10 @@ pub async fn user_or_bot_perm(app: &App, s: &Session, user_id: &str) -> ApiResul
         .fetch_optional(&app.db)
         .await?;
     match owner {
-        Some((owner,)) => Ok(owner == s.user_id && app.has_perm(s, "manage_bots").await
-            || app.has_perm(s, "manage_others_bots").await),
+        Some((owner,)) => {
+            Ok(owner == s.user_id && app.has_perm(s, "manage_bots").await
+                || app.has_perm(s, "manage_others_bots").await)
+        }
         None => Ok(app.user_perm(s, user_id).await),
     }
 }
@@ -665,7 +698,9 @@ async fn password_update(app: &App, s: &Session, user_id: &str, b: &PasswordBody
 pub fn password_change_email(app: &App, u: &User, method_id: &str) {
     let method = crate::i18n::tl(&u.locale, method_id, &[]);
     let (email, locale) = (u.email.clone(), u.locale.clone());
-    crate::email::go(app, "password change email", move |app| async move { crate::email::send_password_change(&app, &email, &method, &locale).await });
+    crate::email::go(app, "password change email", move |app| async move {
+        crate::email::send_password_change(&app, &email, &method, &locale).await
+    });
 }
 
 // ---------- custom status ----------
@@ -825,7 +860,11 @@ async fn set_custom_status(
 }
 
 /// `removeUserCustomStatus`.
-async fn remove_custom_status(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<String>) -> ApiResult<Json<Value>> {
+async fn remove_custom_status(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(user_id): Path<String>,
+) -> ApiResult<Json<Value>> {
     let user_id = user_param(&s, &user_id)?;
     custom_status_disabled(&app)?;
     app.require_user(&s, &user_id).await?;
@@ -907,7 +946,11 @@ async fn create_user(
     };
     let signup_allowed = || -> ApiResult<()> {
         if !app.cfg.bool("EmailSettings.EnableSignUpWithEmail") || !app.cfg.bool("TeamSettings.EnableUserCreation") {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.user.create_user.signup_email_disabled.app_error", ""));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.user.create_user.signup_email_disabled.app_error",
+                "",
+            ));
         }
         Ok(())
     };
@@ -972,24 +1015,33 @@ async fn create_user(
 /// `SendWelcomeEmail` after the answer.
 fn welcome_email(app: &App, u: &User, redirect: &str) {
     let (u, redirect) = (u.clone(), redirect.to_string());
-    crate::email::go(app, "welcome email", move |app| async move { crate::email::send_welcome(&app, &u, &redirect).await });
+    crate::email::go(
+        app,
+        "welcome email",
+        move |app| async move { crate::email::send_welcome(&app, &u, &redirect).await },
+    );
 }
 
 /// `CreateUserWithToken`: a team invitation from an email; guest invitations need a license.
 async fn create_user_with_token(app: &App, mut u: User, token: &str, _redirect: &str) -> ApiResult<Response> {
     let invalid = |status: StatusCode| AppError::new(status, "api.user.create_user.signup_link_invalid.app_error", "");
-    let row: Option<(String, i64, String, String)> =
-        sqlx::query_as("SELECT Token, COALESCE(CreateAt, 0), COALESCE(Type, ''), COALESCE(Extra, '') FROM Tokens WHERE Token = $1")
-            .bind(token)
-            .fetch_optional(&app.db)
-            .await
-            .map_err(|_| invalid(StatusCode::INTERNAL_SERVER_ERROR))?;
+    let row: Option<(String, i64, String, String)> = sqlx::query_as(
+        "SELECT Token, COALESCE(CreateAt, 0), COALESCE(Type, ''), COALESCE(Extra, '') FROM Tokens WHERE Token = $1",
+    )
+    .bind(token)
+    .fetch_optional(&app.db)
+    .await
+    .map_err(|_| invalid(StatusCode::INTERNAL_SERVER_ERROR))?;
     let (token, create_at, kind, extra) = row.ok_or_else(|| invalid(StatusCode::NOT_FOUND))?;
     if kind == crate::email::TOKEN_GUEST_INVITATION {
         return Err(AppError::bad_request("api.user.create_user.guest_accounts.license.app_error", ""));
     }
     if !app.cfg.bool("EmailSettings.EnableSignUpWithEmail") || !app.cfg.bool("TeamSettings.EnableUserCreation") {
-        return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.user.create_user.signup_email_disabled.app_error", ""));
+        return Err(AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "api.user.create_user.signup_email_disabled.app_error",
+            "",
+        ));
     }
     if kind != crate::email::TOKEN_TEAM_INVITATION && kind != crate::email::TOKEN_GUEST_MAGIC_LINK_INVITATION {
         return Err(invalid(StatusCode::BAD_REQUEST));
@@ -1092,9 +1144,10 @@ impl App {
         if !directory && !email_domain_ok(&u.email, restrict) {
             return Err(AppError::bad_request("api.user.create_user.accepted_domain.app_error", ""));
         }
-        let (humans,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM Users u LEFT JOIN Bots b ON b.UserId = u.Id WHERE b.UserId IS NULL")
-            .fetch_one(&self.db)
-            .await?;
+        let (humans,): (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM Users u LEFT JOIN Bots b ON b.UserId = u.Id WHERE b.UserId IS NULL")
+                .fetch_one(&self.db)
+                .await?;
         // Go grants the first user system_admin whatever it asked for (`IsEmpty` before the guest role matters).
         if humans == 0 {
             u.roles = "system_admin system_user".into();
@@ -1113,12 +1166,13 @@ impl App {
         self.save_user_row(&mut u).await?;
         if u.email_verified {
             // `UserService.createUser`: `VerifyEmail` once more after the save (a failure only logged).
-            let r = sqlx::query("UPDATE Users SET Email = lower($1), EmailVerified = true, UpdateAt = $2 WHERE Id = $3")
-                .bind(&u.email)
-                .bind(now_ms())
-                .bind(&u.id)
-                .execute(&self.db)
-                .await;
+            let r =
+                sqlx::query("UPDATE Users SET Email = lower($1), EmailVerified = true, UpdateAt = $2 WHERE Id = $3")
+                    .bind(&u.email)
+                    .bind(now_ms())
+                    .bind(&u.id)
+                    .execute(&self.db)
+                    .await;
             if let Err(e) = r {
                 eprintln!("Failed to set email verified: {e}");
             }
@@ -1233,7 +1287,11 @@ struct EmailBody {
 
 /// `sendPasswordReset` (`SendPasswordReset`): a recovery token and its email; an unknown address is OK, every error
 /// is OK in hardened mode.
-async fn send_password_reset(St(app): St<State>, MaybeAuth(s): MaybeAuth, Body(b): Body<EmailBody>) -> ApiResult<Json<Value>> {
+async fn send_password_reset(
+    St(app): St<State>,
+    MaybeAuth(s): MaybeAuth,
+    Body(b): Body<EmailBody>,
+) -> ApiResult<Json<Value>> {
     let email = b.email.to_lowercase();
     if email.is_empty() {
         return Err(AppError::invalid_param("email"));
@@ -1261,20 +1319,29 @@ async fn send_password_reset(St(app): St<State>, MaybeAuth(s): MaybeAuth, Body(b
     let session = s.clone();
     tokio::spawn(async move {
         let sent = async {
-            let token = crate::email::create_password_recovery_token(&app, &u.id, &u.email).await.map_err(|e| e.detailed_error)?;
+            let token = crate::email::create_password_recovery_token(&app, &u.id, &u.email)
+                .await
+                .map_err(|e| e.detailed_error)?;
             crate::email::send_password_reset(&app, &u.email, &token, &u.locale).await
         }
         .await;
         match sent {
             Ok(()) => crate::audit::log(&app, session.as_deref(), &format!("sent={email}")).await,
-            Err(e) => crate::logs::error("Failed to send the password reset email", &[("user_id", json!(u.id)), ("error", json!(e))]),
+            Err(e) => crate::logs::error(
+                "Failed to send the password reset email",
+                &[("user_id", json!(u.id)), ("error", json!(e))],
+            ),
         }
     });
     Ok(ok())
 }
 
 /// `sendVerificationEmail`: always OK, whether or not the address is known and the email went out.
-async fn send_verification(St(app): St<State>, Query(q): Query<std::collections::HashMap<String, String>>, Body(b): Body<EmailBody>) -> ApiResult<Json<Value>> {
+async fn send_verification(
+    St(app): St<State>,
+    Query(q): Query<std::collections::HashMap<String, String>>,
+    Body(b): Body<EmailBody>,
+) -> ApiResult<Json<Value>> {
     let email = b.email.to_lowercase();
     if email.is_empty() {
         return Err(AppError::invalid_param("email"));
@@ -1307,7 +1374,11 @@ async fn get_sessions(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<Str
 }
 
 /// `handleDeviceProps`: the mobile app's push device and its props.
-async fn device_props(St(app): St<State>, Auth(s): Auth, Body(props): Body<BTreeMap<String, Value>>) -> ApiResult<Json<Value>> {
+async fn device_props(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Body(props): Body<BTreeMap<String, Value>>,
+) -> ApiResult<Json<Value>> {
     let get = |k: &str| props.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let (device, voip) = (get("device_id"), get("voip_device_id"));
     let mut new_props = BTreeMap::new();
@@ -1320,7 +1391,8 @@ async fn device_props(St(app): St<State>, Auth(s): Auth, Body(props): Body<BTree
     }
     let version = get("mobile_version");
     if !version.is_empty() {
-        let semver = version.split('.').count() == 3 && version.split('.').all(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()));
+        let semver = version.split('.').count() == 3
+            && version.split('.').all(|p| p.chars().next().is_some_and(|c| c.is_ascii_digit()));
         if !semver {
             return Err(AppError::invalid_param("mobile_version"));
         }
@@ -1363,7 +1435,11 @@ async fn device_props(St(app): St<State>, Auth(s): Auth, Body(props): Body<BTree
         }
     }
     if changed {
-        sqlx::query("UPDATE Sessions SET Props = $1 WHERE Id = $2").bind(&session.props).bind(&s.id).execute(&app.db).await?;
+        sqlx::query("UPDATE Sessions SET Props = $1 WHERE Id = $2")
+            .bind(&session.props)
+            .bind(&s.id)
+            .execute(&app.db)
+            .await?;
     }
     app.clear_sessions_for_user(&s.user_id);
     Ok(ok())

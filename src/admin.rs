@@ -11,9 +11,9 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, Instant};
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -134,7 +134,13 @@ async fn analytics(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResult<
             let open = app.count(&format!("SELECT COUNT(*) FROM Channels WHERE Type = 'O'{tf}"), team).await?;
             let private = app.count(&format!("SELECT COUNT(*) FROM Channels WHERE Type = 'P'{tf}"), team).await?;
             let posts = app
-                .count(&format!("SELECT COALESCE(SUM(num), 0)::bigint FROM posts_by_team_day{}", if team.is_empty() { "" } else { " WHERE teamid = $1" }), team)
+                .count(
+                    &format!(
+                        "SELECT COALESCE(SUM(num), 0)::bigint FROM posts_by_team_day{}",
+                        if team.is_empty() { "" } else { " WHERE teamid = $1" }
+                    ),
+                    team,
+                )
                 .await?;
             let (users, inactive) = if team.is_empty() {
                 let inactive = app
@@ -225,12 +231,15 @@ async fn analytics(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResult<
         }
         "extra_counts" => {
             let tf = if team.is_empty() { "" } else { " AND TeamId = $1" };
-            let incoming = app.count(&format!("SELECT COUNT(*) FROM IncomingWebhooks WHERE DeleteAt = 0{tf}"), team).await?;
+            let incoming =
+                app.count(&format!("SELECT COUNT(*) FROM IncomingWebhooks WHERE DeleteAt = 0{tf}"), team).await?;
             // Go's AnalyticsOutgoingCount builds `WHERE ... AND TeamId` without a value for a team, an SQL error;
             // the team is compared here.
-            let outgoing = app.count(&format!("SELECT COUNT(*) FROM OutgoingWebhooks WHERE DeleteAt = 0{tf}"), team).await?;
+            let outgoing =
+                app.count(&format!("SELECT COUNT(*) FROM OutgoingWebhooks WHERE DeleteAt = 0{tf}"), team).await?;
             let commands = app.count(&format!("SELECT COUNT(*) FROM Commands WHERE DeleteAt = 0{tf}"), team).await?;
-            let sessions = app.count(&format!("SELECT COUNT(*) FROM Sessions WHERE ExpiresAt > {}", now_ms()), "").await?;
+            let sessions =
+                app.count(&format!("SELECT COUNT(*) FROM Sessions WHERE ExpiresAt > {}", now_ms()), "").await?;
             let files = app.count("SELECT COALESCE((SELECT num FROM file_stats LIMIT 1), 0)::bigint", "").await?;
             let size = app.count("SELECT COALESCE((SELECT usage FROM file_stats LIMIT 1), 0)::bigint", "").await?;
             rows(&[
@@ -310,7 +319,8 @@ async fn latest_version(St(app): St<State>, Auth(s): Auth) -> ApiResult<Response
         .send()
         .await
         .map_err(|e| fail(e.to_string()))?;
-    let body: Value = serde_json::from_slice(&res.bytes().await.map_err(|e| fail(e.to_string()))?).map_err(|e| fail(e.to_string()))?;
+    let body: Value = serde_json::from_slice(&res.bytes().await.map_err(|e| fail(e.to_string()))?)
+        .map_err(|e| fail(e.to_string()))?;
     // GithubReleaseInfo, and its IsValid.
     let mut v = Map::new();
     for k in ["id", "tag_name", "name", "created_at", "published_at", "body", "html_url"] {
@@ -345,8 +355,10 @@ async fn server_limits(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<Valu
     } else {
         0
     };
-    Ok(Json(json!({"maxUsersLimit": 0, "maxUsersHardLimit": 0, "activeUserCount": active, "singleChannelGuestCount": 0,
-                   "singleChannelGuestLimit": 0, "postHistoryLimit": 0, "lastAccessiblePostTime": 0})))
+    Ok(Json(
+        json!({"maxUsersLimit": 0, "maxUsersHardLimit": 0, "activeUserCount": active, "singleChannelGuestCount": 0,
+                   "singleChannelGuestLimit": 0, "postHistoryLimit": 0, "lastAccessiblePostTime": 0}),
+    ))
 }
 
 // ---------- first admin visit, onboarding ----------
@@ -449,7 +461,11 @@ async fn clear_busy(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<Value>>
 // ---------- shared channels, schema, timezones ----------
 
 /// `canUserDirectMessage`: without shared channels, anyone the user can see.
-async fn can_dm(St(app): St<State>, Auth(s): Auth, Path((user_id, other)): Path<(String, String)>) -> ApiResult<Response> {
+async fn can_dm(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path((user_id, other)): Path<(String, String)>,
+) -> ApiResult<Response> {
     let user_id = s.resolve(&user_id);
     if !is_valid_id(&user_id) {
         return Err(AppError::invalid_url_param("user_id"));
@@ -475,7 +491,10 @@ async fn schema_version(St(app): St<State>, Auth(s): Auth) -> ApiResult<Response
 
 /// `getSupportedTimezones` (`data/timezones.json`, Go's `DefaultSupportedTimezones`).
 async fn timezones(_: Auth) -> Response {
-    ([(header::CONTENT_TYPE, "application/json")], include_str!("../data/timezones.json").trim().replace(['\n', ' '], ""))
+    (
+        [(header::CONTENT_TYPE, "application/json")],
+        include_str!("../data/timezones.json").trim().replace(['\n', ' '], ""),
+    )
         .into_response()
 }
 
@@ -666,7 +685,10 @@ fn test_config(app: &App, body: &Bytes) -> Value {
 
 /// `checkHasNilFields` over a section of a test request's config.
 fn has_nil_fields(cfg: &Value, section: &str) -> bool {
-    match (crate::config::defaults().get(section).and_then(Value::as_object), cfg.get(section).and_then(Value::as_object)) {
+    match (
+        crate::config::defaults().get(section).and_then(Value::as_object),
+        cfg.get(section).and_then(Value::as_object),
+    ) {
         (Some(schema), Some(m)) => schema.keys().any(|k| m.get(k).is_none_or(Value::is_null)),
         _ => true,
     }
@@ -683,12 +705,16 @@ async fn test_email(St(app): St<State>, Auth(s): Auth, body: Bytes) -> ApiResult
     let e = cfg["EmailSettings"].clone();
     let st = |k: &str| e[k].as_str().unwrap_or("").to_string();
     if st("SMTPServer").is_empty() {
-        return Err(AppError::bad_request("api.admin.test_email.missing_server", "")
-            .detail(crate::i18n::tr("api.context.invalid_param.app_error", &[("Name", "SMTPServer")]).unwrap_or_default()));
+        return Err(AppError::bad_request("api.admin.test_email.missing_server", "").detail(
+            crate::i18n::tr("api.context.invalid_param.app_error", &[("Name", "SMTPServer")]).unwrap_or_default(),
+        ));
     }
     if st("SMTPPassword") == "********************************" {
         let cur = |k: &str| app.cfg.str(&format!("EmailSettings.{k}")).to_string();
-        if st("SMTPServer") == cur("SMTPServer") && st("SMTPPort") == cur("SMTPPort") && st("SMTPUsername") == cur("SMTPUsername") {
+        if st("SMTPServer") == cur("SMTPServer")
+            && st("SMTPPort") == cur("SMTPPort")
+            && st("SMTPUsername") == cur("SMTPUsername")
+        {
             cfg["EmailSettings"]["SMTPPassword"] = Value::String(cur("SMTPPassword"));
         } else {
             return Err(AppError::bad_request("api.admin.test_email.reenter_password", ""));
@@ -702,14 +728,17 @@ async fn test_email(St(app): St<State>, Auth(s): Auth, body: Bytes) -> ApiResult
         html: crate::i18n::tl(&user.locale, "api.admin.test_email.body", &[]),
         ..Default::default()
     };
-    crate::mail::send(&m, &smtp).await.map_err(|err| AppError::internal("app.admin.test_email.failure", "").with_param("Error", &err))?;
+    crate::mail::send(&m, &smtp)
+        .await
+        .map_err(|err| AppError::internal("app.admin.test_email.failure", "").with_param("Error", &err))?;
     Ok(ok())
 }
 
 /// `appendAncillaryPermissionsPost` (`data/ancillary_permissions.json`, Go's `SysconsoleAncillaryPermissions`).
 async fn ancillary_permissions(_: Auth, body: Bytes) -> ApiResult<Response> {
     static MAP: std::sync::OnceLock<HashMap<String, Vec<String>>> = std::sync::OnceLock::new();
-    let map = MAP.get_or_init(|| serde_json::from_str(include_str!("../data/ancillary_permissions.json")).unwrap_or_default());
+    let map = MAP
+        .get_or_init(|| serde_json::from_str(include_str!("../data/ancillary_permissions.json")).unwrap_or_default());
     let perms: Vec<String> = serde_json::from_slice(&body)
         .ok()
         .filter(|p: &Vec<String>| !p.is_empty())
@@ -727,11 +756,30 @@ async fn ancillary_permissions(_: Auth, body: Bytes) -> ApiResult<Response> {
 
 /// `AllJobTypes`: what a listing without a type covers, and the types `IsValidJobType` accepts.
 const ALL_JOB_TYPES: &[&str] = &[
-    "data_retention", "message_export", "elasticsearch_post_indexing", "elasticsearch_post_aggregation", "ldap_sync",
-    "migrations", "plugins", "expiry_notify", "product_notices", "active_users", "import_process", "import_delete",
-    "export_process", "export_delete", "cloud", "extract_content", "last_accessible_post", "last_accessible_file",
-    "cleanup_desktop_tokens", "cleanup_expired_access_tokens", "notify_expiring_access_tokens",
-    "refresh_materialized_views", "mobile_session_metadata", "scheduled_recap",
+    "data_retention",
+    "message_export",
+    "elasticsearch_post_indexing",
+    "elasticsearch_post_aggregation",
+    "ldap_sync",
+    "migrations",
+    "plugins",
+    "expiry_notify",
+    "product_notices",
+    "active_users",
+    "import_process",
+    "import_delete",
+    "export_process",
+    "export_delete",
+    "cloud",
+    "extract_content",
+    "last_accessible_post",
+    "last_accessible_file",
+    "cleanup_desktop_tokens",
+    "cleanup_expired_access_tokens",
+    "notify_expiring_access_tokens",
+    "refresh_materialized_views",
+    "mobile_session_metadata",
+    "scheduled_recap",
 ];
 
 /// `SessionHasPermissionToReadJob`: the permission a job type needs, if any.
@@ -742,9 +790,20 @@ async fn read_job_permission(app: &App, s: &Session, job_type: &str) -> Option<(
         "elasticsearch_post_indexing" => "read_elasticsearch_post_indexing_job",
         "elasticsearch_post_aggregation" => "read_elasticsearch_post_aggregation_job",
         "ldap_sync" => "read_ldap_sync_job",
-        "migrations" | "plugins" | "product_notices" | "expiry_notify" | "active_users" | "import_process"
-        | "import_delete" | "export_process" | "export_delete" | "cloud" | "mobile_session_metadata"
-        | "extract_content" | "post_persistent_notifications" | "delete_expired_posts"
+        "migrations"
+        | "plugins"
+        | "product_notices"
+        | "expiry_notify"
+        | "active_users"
+        | "import_process"
+        | "import_delete"
+        | "export_process"
+        | "export_delete"
+        | "cloud"
+        | "mobile_session_metadata"
+        | "extract_content"
+        | "post_persistent_notifications"
+        | "delete_expired_posts"
         | "cleanup_expired_access_tokens" => "read_jobs",
         "access_control_sync" => crate::perm::MANAGE_SYSTEM,
         "access_control_team_sync" => {
@@ -808,7 +867,10 @@ async fn jobs(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResult<Respo
     }
     let status = query(&q, "status");
     if !status.is_empty()
-        && !matches!(status, "pending" | "in_progress" | "success" | "error" | "cancel_requested" | "canceled" | "warning")
+        && !matches!(
+            status,
+            "pending" | "in_progress" | "success" | "error" | "cancel_requested" | "canceled" | "warning"
+        )
     {
         return Err(AppError::bad_request("api.job.status.invalid", ""));
     }
@@ -817,7 +879,12 @@ async fn jobs(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResult<Respo
 }
 
 /// `getJobsByType`.
-async fn jobs_by_type(St(app): St<State>, Auth(s): Auth, Path(job_type): Path<String>, Query(q): Q) -> ApiResult<Response> {
+async fn jobs_by_type(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(job_type): Path<String>,
+    Query(q): Q,
+) -> ApiResult<Response> {
     if job_type.is_empty() || job_type.len() > 32 {
         return Err(AppError::invalid_url_param("job_type"));
     }
@@ -946,7 +1013,8 @@ fn user_report_filter(q: &HashMap<String, String>) -> ApiResult<(String, Vec<Str
 async fn user_report_count(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResult<Response> {
     app.require(&s, "sysconsole_read_user_management_users").await?;
     let (cond, args) = user_report_filter(&q)?;
-    let mut qy = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(u.Id) FROM Users u WHERE {cond}")));
+    let mut qy =
+        sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(format!("SELECT COUNT(u.Id) FROM Users u WHERE {cond}")));
     for a in args {
         qy = qy.bind(a);
     }
@@ -1011,7 +1079,10 @@ async fn user_report(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResul
         return Err(AppError::bad_request("api.getUsersForReporting.invalid_page_size", ""));
     }
     let col = col.ok_or_else(|| {
-        AppError::bad_request("model.user_report_options.is_valid.invalid_sort_column", "Provided sort column is not valid.")
+        AppError::bad_request(
+            "model.user_report_options.is_valid.invalid_sort_column",
+            "Provided sort column is not valid.",
+        )
     })?;
     let mut having = String::new();
     let mut dir = if desc { "DESC" } else { "ASC" };
@@ -1021,7 +1092,8 @@ async fn user_report(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResul
         let v = args.len();
         args.push(from_id.to_string());
         let i = args.len();
-        let typed = if col.starts_with("u.") && col != "u.CreateAt" { format!("${v}") } else { format!("${v}::bigint") };
+        let typed =
+            if col.starts_with("u.") && col != "u.CreateAt" { format!("${v}") } else { format!("${v}::bigint") };
         let (cmp, d) = if prev != desc { ("<", "DESC") } else { (">", "ASC") };
         dir = d;
         having = format!("HAVING ({col} {cmp} {typed} OR ({col} = {typed} AND u.Id {cmp} ${i}))");
@@ -1050,8 +1122,23 @@ async fn user_report(St(app): St<State>, Auth(s): Auth, Query(q): Q) -> ApiResul
     let users = crate::users::query_users(&app, "", "u.Id = ANY($1)", "", vec![crate::users::Arg::V(ids)]).await?;
     // ClearNonProfileFields(true)
     const KEEP: &[&str] = &[
-        "id", "create_at", "update_at", "delete_at", "username", "auth_service", "email", "nickname", "first_name",
-        "last_name", "position", "roles", "notify_props", "locale", "timezone", "remote_id", "disable_welcome_email",
+        "id",
+        "create_at",
+        "update_at",
+        "delete_at",
+        "username",
+        "auth_service",
+        "email",
+        "nickname",
+        "first_name",
+        "last_name",
+        "position",
+        "roles",
+        "notify_props",
+        "locale",
+        "timezone",
+        "remote_id",
+        "disable_welcome_email",
         "last_login",
     ];
     let out: Vec<Value> = rows

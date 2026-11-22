@@ -19,7 +19,13 @@ const TOWN_SQUARE: &str = "town-square";
 
 /// The response of built-in `trigger`, or None when there is no such built-in (or it is off, as `/status`
 /// without custom statuses).
-pub async fn run(app: &State, s: &Session, args: &CommandArgs, trigger: &str, message: &str) -> Option<CommandResponse> {
+pub async fn run(
+    app: &State,
+    s: &Session,
+    args: &CommandArgs,
+    trigger: &str,
+    message: &str,
+) -> Option<CommandResponse> {
     let r = match trigger {
         "away" => {
             app.set_status_away_if_needed(&args.user_id, true).await;
@@ -256,7 +262,8 @@ async fn msg(app: &State, s: &Session, args: &CommandArgs, message: &str) -> Com
         Err(_) => return ephemeral(tr("api.command_msg.dm_fail.app_error")),
     };
     if !text.is_empty() {
-        let post = Post { message: text.into(), channel_id: target_id, user_id: args.user_id.clone(), ..Default::default() };
+        let post =
+            Post { message: text.into(), channel_id: target_id, user_id: args.user_id.clone(), ..Default::default() };
         if app.create_post(post, true).await.is_err() {
             return fail();
         }
@@ -346,7 +353,8 @@ async fn groupmsg(app: &State, s: &Session, args: &CommandArgs, message: &str) -
         }
     };
     if !text.is_empty() {
-        let post = Post { message: text, channel_id: group.id.clone(), user_id: args.user_id.clone(), ..Default::default() };
+        let post =
+            Post { message: text, channel_id: group.id.clone(), user_id: args.user_id.clone(), ..Default::default() };
         if app.create_post(post, true).await.is_err() {
             return fail();
         }
@@ -570,11 +578,14 @@ async fn invite(app: &State, args: &CommandArgs, message: &str) -> String {
                 },
             };
             match added {
-                Added::Ok if args.channel_id != c.id => different.entry(c.name.clone()).or_default().push(u.username.clone()),
+                Added::Ok if args.channel_id != c.id => {
+                    different.entry(c.name.clone()).or_default().push(u.username.clone())
+                }
                 Added::Ok => {}
                 Added::NotInTeam => {
                     if team_display.is_empty() {
-                        team_display = app.team(&c.team_id).await.map(|t| t.display_name.clone()).unwrap_or("unknown".into());
+                        team_display =
+                            app.team(&c.team_id).await.map(|t| t.display_name.clone()).unwrap_or("unknown".into());
                     }
                     not_in_team.entry(team_display.clone()).or_default().push(u.username.clone());
                 }
@@ -594,8 +605,12 @@ async fn invite(app: &State, args: &CommandArgs, message: &str) -> String {
         } else {
             let user = format!("@{}", in_channel.join(", @"));
             resps.push(
-                crate::i18n::tr_n("api.command_invite.user_already_in_channel.app_error", in_channel.len(), &[("User", &user)])
-                    .unwrap_or_default(),
+                crate::i18n::tr_n(
+                    "api.command_invite.user_already_in_channel.app_error",
+                    in_channel.len(),
+                    &[("User", &user)],
+                )
+                .unwrap_or_default(),
             );
         }
     }
@@ -683,7 +698,12 @@ async fn invite_people(app: &State, args: &CommandArgs, message: &str) -> Comman
     if !app.cfg.bool("ServiceSettings.EnableEmailInvitations") {
         return ephemeral(tr("api.command.invite_people.email_invitations_off"));
     }
-    let emails: Vec<String> = message.split_whitespace().map(|t| t.trim_matches(',')).filter(|t| t.contains('@')).map(str::to_string).collect();
+    let emails: Vec<String> = message
+        .split_whitespace()
+        .map(|t| t.trim_matches(','))
+        .filter(|t| t.contains('@'))
+        .map(str::to_string)
+        .collect();
     if emails.is_empty() {
         return ephemeral(tr("api.command.invite_people.no_email"));
     }
@@ -867,7 +887,8 @@ async fn mobile_logs(app: &State, s: &Session, args: &CommandArgs, message: &str
             if app.update_preferences(&target, vec![pref]).await.is_err() {
                 return ephemeral(tr("api.command_mobile_logs.update_error.app_error"));
             }
-            let id = if action == "on" { "api.command_mobile_logs.enabled" } else { "api.command_mobile_logs.disabled" };
+            let id =
+                if action == "on" { "api.command_mobile_logs.enabled" } else { "api.command_mobile_logs.disabled" };
             ephemeral(trp(id, &user))
         }
         _ => match app.preference(&target, "advanced_settings", "attach_app_logs").await {

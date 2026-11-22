@@ -21,6 +21,7 @@ ebachat-macros = { version = "0.1.0", path = "macros" }
 encoding_rs = "0.8.44"
 flate2 = "1.1.11"
 futures-util = "0.3.34"
+goplugin = { path = "goplugin" }
 hmac = "0.13.0"
 html-escape = "0.3.1"
 html5ever = "0.27"
@@ -60,7 +61,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 zstd = { version = "0.13.3", default-features = false }
 
 [workspace]
-members = ["macros", "tools/loadgen"]
+members = ["macros", "goplugin", "tools/loadgen"]
 
 [dev-dependencies]
 reqwest = { version = "0.13.5", features = ["json"] }

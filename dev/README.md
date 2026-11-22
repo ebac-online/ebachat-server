@@ -25,3 +25,14 @@ GOWORK=/tmp/go.work go build -buildvcs=false -o ../../../ebachat-server/dev/bin/
 
 No build tags: that is Team Edition. Without the `go.work` the build picks `server/public` from the module cache and
 fails.
+
+## Docker
+
+```sh
+docker build -t ebachat-server .
+docker run -d --name ebachat-server -p 8066:8065 \
+  -v <config>:/ebachat/config -v <client>:/ebachat/client:ro -v <files>:/ebachat/data \
+  -e 'DATABASE_URL=postgres://<user>:<password>@<host>:5432/<database>?sslmode=disable' ebachat-server
+```
+
+`<config>` is a folder with `config.json`, writable: the server writes it back at start.

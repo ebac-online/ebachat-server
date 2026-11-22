@@ -5,13 +5,13 @@
 // store/sqlstore/post_store.go and store/localcachelayer/post_layer.go, Copyright (c) 2015-present
 // Mattermost, Inc. Licensed under AGPL-3.0.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, LazyLock};
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
-use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::extract::{Path, State as St};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use regex::Regex;
@@ -20,13 +20,12 @@ use serde_json::{Value, json};
 use sqlx::Row;
 use sqlx::postgres::PgRow;
 
-use crate::app::{ApiResult, App, AppError, Auth, BusyAuth, Body, State, is_valid_id, now_ms};
+use crate::app::{ApiResult, App, AppError, Auth, Body, BusyAuth, State, is_valid_id, now_ms};
 use crate::db::{self, Table};
 use crate::hub::Broadcast;
 use crate::model::post::{EmbedData, PostEmbed, PreviewPost, kind};
 use crate::model::{
-    Channel, Post, PostAcknowledgement, PostList, PostMetadata, PostPriority, Session, Show, User,
-    channel,
+    Channel, Post, PostAcknowledgement, PostList, PostMetadata, PostPriority, Session, Show, User, channel,
 };
 use crate::perm;
 use crate::users::ok;
@@ -166,9 +165,8 @@ pub fn post_not_found() -> AppError {
 }
 
 static EMOJI: LazyLock<Regex> = LazyLock::new(|| Regex::new(r":[a-zA-Z0-9_+-]+:").unwrap());
-static LINK: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)<((?:https?|ftp)://[^\s>]+)>|((?:https?://|ftp://|www\.)[^\s<]+)"#).unwrap()
-});
+static LINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?i)<((?:https?|ftp)://[^\s>]+)>|((?:https?://|ftp://|www\.)[^\s<]+)"#).unwrap());
 static MD_IMAGE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"!\[[^\]]*\]\(\s*<?([^)\s>]+)>?(?:\s+"[^"]*")?\s*\)"#).unwrap());
 static MD_LINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"!?\[[^\]]*\]\([^)]*\)").unwrap());
@@ -206,21 +204,21 @@ fn markdown_images(s: &str) -> Vec<String> {
 /// `model.ParseHashtags`.
 pub fn parse_hashtags(text: &str) -> String {
     let mut out = String::new();
-    let mut seen = HashSet::new();
     for word in text.split_whitespace() {
         let w = word.trim_start_matches(|c: char| !c.is_alphanumeric() && c != '#');
         let w = w.trim_end_matches(|c: char| !c.is_alphanumeric());
-        if w.len() > 3 && HASHTAG.is_match(w) && seen.insert(w.to_string()) {
-            if out.len() + w.len() + 1 > 1000 {
-                break;
-            }
-            if !out.is_empty() {
-                out.push(' ');
-            }
+        let pounds = w.len() - w.trim_start_matches('#').len();
+        let w = if pounds > 1 { &w[pounds - 1..] } else { w };
+        if HASHTAG.is_match(w) {
+            out.push(' ');
             out.push_str(w);
         }
     }
-    out
+    if out.len() > 1000 {
+        let cut = out.as_bytes()[..999].iter().rposition(|&b| b == b' ').unwrap_or(0);
+        out.truncate(cut);
+    }
+    out.trim_start().to_string()
 }
 
 /// `Post.AllStrings` without interactive blocks: the message and the attachments' texts.
@@ -339,7 +337,8 @@ impl App {
         if post_id.is_empty() {
             return Ok((false, false));
         }
-        let c: Option<(String,)> = sqlx::query_as("SELECT ChannelId FROM Posts WHERE Id = $1").bind(post_id).fetch_optional(&self.db).await?;
+        let c: Option<(String,)> =
+            sqlx::query_as("SELECT ChannelId FROM Posts WHERE Id = $1").bind(post_id).fetch_optional(&self.db).await?;
         let Some(Some(c)) = (match c {
             Some((cid,)) => Some(self.channel(&cid).await?),
             None => None,
@@ -354,7 +353,8 @@ impl App {
         if post_id.is_empty() {
             return Ok(false);
         }
-        let c: Option<(String,)> = sqlx::query_as("SELECT ChannelId FROM Posts WHERE Id = $1").bind(post_id).fetch_optional(&self.db).await?;
+        let c: Option<(String,)> =
+            sqlx::query_as("SELECT ChannelId FROM Posts WHERE Id = $1").bind(post_id).fetch_optional(&self.db).await?;
         if let Some((cid,)) = c {
             let roles = self.member_roles(&s.user_id, true).await?;
             if let Some(r) = roles.get(&cid)
@@ -443,7 +443,11 @@ impl App {
             return self.threaded(rows, o.collapsed_threads_extended, false).await;
         }
         let del = if o.include_deleted { "" } else { " AND p.DeleteAt = 0" };
-        let rc = if o.skip_fetch_threads { format!(", {}", reply_count_col("p", o.include_deleted)) } else { ", 0::bigint AS replycount".into() };
+        let rc = if o.skip_fetch_threads {
+            format!(", {}", reply_count_col("p", o.include_deleted))
+        } else {
+            ", 0::bigint AS replycount".into()
+        };
         let roots = format!(
             "SELECT {}{rc} FROM Posts p WHERE p.ChannelId = $1{del}{ex} ORDER BY p.CreateAt DESC LIMIT $2 OFFSET $3",
             pc("p")
@@ -451,7 +455,11 @@ impl App {
         let q2del = if o.include_deleted { "" } else { "AND q2.DeleteAt = 0" };
         let subdel = if o.include_deleted { "" } else { "AND Posts.DeleteAt = 0" };
         let on = if o.skip_fetch_threads { "q1.RootId = q2.Id" } else { "q1.RootId = q2.Id OR q1.RootId = q2.RootId" };
-        let prc = if o.skip_fetch_threads { format!(", {}", reply_count_col("q2", o.include_deleted)) } else { ", 0::bigint AS replycount".into() };
+        let prc = if o.skip_fetch_threads {
+            format!(", {}", reply_count_col("q2", o.include_deleted))
+        } else {
+            ", 0::bigint AS replycount".into()
+        };
         let parents = format!(
             "SELECT {}{prc} FROM Posts q2 INNER JOIN (SELECT DISTINCT q3.RootId FROM (SELECT Posts.RootId FROM Posts
                WHERE Posts.ChannelId = $1 {subdel} ORDER BY Posts.CreateAt DESC LIMIT $2 OFFSET $3) q3 WHERE q3.RootId != '') q1
@@ -614,8 +622,11 @@ impl App {
                 pc("p"),
                 reply_count_col("p", o.include_deleted)
             );
-            let parents: Vec<WithCount> =
-                sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&root_ids).bind(&o.channel_id).fetch_all(&self.db).await?;
+            let parents: Vec<WithCount> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+                .bind(&root_ids)
+                .bind(&o.channel_id)
+                .fetch_all(&self.db)
+                .await?;
             for p in parents {
                 list.posts.entry(p.0.id.clone()).or_insert(p.0);
             }
@@ -724,7 +735,8 @@ impl App {
             });
         }
         let extra: String = conds.iter().map(|c| format!(" AND {c}")).collect();
-        let order = if sort.is_empty() { String::new() } else { format!(" ORDER BY p.{order_col} {sort}, p.Id {sort}") };
+        let order =
+            if sort.is_empty() { String::new() } else { format!(" ORDER BY p.{order_col} {sort}, p.Id {sort}") };
         let limit = if o.per_page != 0 { format!(" LIMIT {}", o.per_page + 1) } else { String::new() };
 
         let mut list;
@@ -735,15 +747,15 @@ impl App {
                 pc("p"),
                 crt_joins("p")
             );
-            let row: Option<WithThread> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-                .bind(&o.user_id)
-                .bind(id)
-                .fetch_optional(&self.db)
-                .await?;
+            let row: Option<WithThread> =
+                sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&o.user_id).bind(id).fetch_optional(&self.db).await?;
             let row = row.ok_or_else(post_not_found)?;
             root_id = id.to_string();
             list = self.threaded(vec![row], o.collapsed_threads_extended, false).await?;
-            let sql = format!("SELECT {}, 0::bigint AS replycount FROM Posts p WHERE p.RootId = $1 AND p.DeleteAt = 0{extra}{order}{limit}", pc("p"));
+            let sql = format!(
+                "SELECT {}, 0::bigint AS replycount FROM Posts p WHERE p.RootId = $1 AND p.DeleteAt = 0{extra}{order}{limit}",
+                pc("p")
+            );
             let mut q = sqlx::query_as::<_, WithCount>(sqlx::AssertSqlSafe(sql)).bind(&root_id).bind(&o.from_post);
             for a in &args {
                 q = q.bind(*a);
@@ -873,6 +885,14 @@ impl App {
     /// priority and acknowledgements.
     pub async fn prepare_post(&self, original: &Post, o: Prep) -> Post {
         let mut post = original.clone();
+        // OverrideIconURLIfEmoji: an emoji icon shows as its image.
+        if let Some(Value::String(name)) = post.props.0.get("override_icon_emoji")
+            && !name.is_empty()
+            && self.cfg.bool("ServiceSettings.EnablePostIconOverride")
+            && let Some(url) = self.emoji_static_url(&name.replace(':', "")).await
+        {
+            post.props.0.insert("override_icon_url".into(), url.into());
+        }
         let mut md = PostMetadata::default();
         if post.delete_at > 0 && !o.retain_content {
             post.message.clear();
@@ -934,8 +954,13 @@ impl App {
         if restrict.trim().is_empty() {
             return true;
         }
-        let host = link.split("://").nth(1).unwrap_or(link).split(['/', '?', '#', ':']).next().unwrap_or("").to_lowercase();
-        !restrict.split(',').map(|d| d.trim().to_lowercase()).filter(|d| !d.is_empty()).any(|d| host == d || host.ends_with(&format!(".{d}")))
+        let host =
+            link.split("://").nth(1).unwrap_or(link).split(['/', '?', '#', ':']).next().unwrap_or("").to_lowercase();
+        !restrict
+            .split(',')
+            .map(|d| d.trim().to_lowercase())
+            .filter(|d| !d.is_empty())
+            .any(|d| host == d || host.ends_with(&format!(".{d}")))
     }
 
     fn site_url(&self) -> String {
@@ -985,7 +1010,11 @@ impl App {
                                 og_images.push(u.clone());
                             }
                         }
-                        md.embeds.push(PostEmbed::new("opengraph", &link, Some(EmbedData::OpenGraph(Box::new(og.clone())))));
+                        md.embeds.push(PostEmbed::new(
+                            "opengraph",
+                            &link,
+                            Some(EmbedData::OpenGraph(Box::new(og.clone()))),
+                        ));
                     } else if let Some(img) = &meta.image {
                         if img.format == "svg" || link.to_lowercase().ends_with(".svg") {
                             md.embeds.push(PostEmbed::new("link", &link, None));
@@ -1038,7 +1067,11 @@ impl App {
         let team_name: String = if c.is_group_or_direct() {
             String::new()
         } else {
-            sqlx::query_scalar("SELECT Name FROM Teams WHERE Id = $1").bind(&c.team_id).fetch_optional(&self.db).await.ok()??
+            sqlx::query_scalar("SELECT Name FROM Teams WHERE Id = $1")
+                .bind(&c.team_id)
+                .fetch_optional(&self.db)
+                .await
+                .ok()??
         };
         let contains = first_link(&p.message).is_some_and(|l| self.looks_like_permalink(&l));
         let p = if contains {
@@ -1125,7 +1158,9 @@ impl App {
         let Value::Object(m) = m.clone() else { return };
         let mut keep = serde_json::Map::new();
         for (name, v) in m {
-            let Some(team_name) = v.as_object().and_then(|o| o.get("team_name")).and_then(Value::as_str).filter(|t| !t.is_empty()) else {
+            let Some(team_name) =
+                v.as_object().and_then(|o| o.get("team_name")).and_then(Value::as_str).filter(|t| !t.is_empty())
+            else {
                 continue;
             };
             // GetChannelByNameForTeamName(name, team, includeDeleted)
@@ -1162,55 +1197,153 @@ impl App {
     /// `publishWebsocketEventForPost`: the post without permalink embeds and without its channel mentions for
     /// everyone; the mentions go back in per recipient (`channelMentionsBroadcastHook`), as stored (with the
     /// channel id), those of the channels the recipient may resolve (`HasPermissionToResolveChannelMention`).
-    /// Mentions without a channel id, or whose channel is gone, are dropped.
+    /// Mentions without a channel id, or whose channel is gone, are dropped. The permalink preview goes back in
+    /// for the recipients who may read its channel (`permalinkBroadcastHook`), with its post's mentions filtered
+    /// the same way.
     pub async fn post_for_broadcast(&self, post: &Post) -> BroadcastPost {
         let mut p = post.clone();
-        if let Some(md) = p.metadata.as_mut() {
+        let preview = p.metadata.as_mut().and_then(|md| {
+            let pp = md.embeds.iter().find_map(|e| match &e.data {
+                Some(EmbedData::Permalink(pp)) if e.r#type == "permalink" => Some((**pp).clone()),
+                _ => None,
+            });
             md.embeds.retain(|e| e.r#type != "permalink");
+            pp
+        });
+        let prop = p.props.0.remove("previewed_post");
+        let mentions = match p.props.0.remove("channel_mentions") {
+            Some(Value::Object(m)) => self.mention_channels(m).await,
+            _ => vec![],
+        };
+        let mut permalink = None;
+        if let (Some(preview), Some(Value::String(prop))) = (preview, prop)
+            && is_valid_id(&prop)
+            && let Ok(Some(channel)) = self.channel(&preview.channel_id).await
+        {
+            let mentions = match preview.post.as_ref().and_then(|x| x.props.0.get("channel_mentions")) {
+                Some(Value::Object(m)) => self.mention_channels(m.clone()).await,
+                _ => vec![],
+            };
+            permalink = Some(Arc::new(Permalink { prop, preview, channel, mentions }));
         }
-        p.props.0.remove("previewed_post");
-        let mut mentions = vec![];
-        if let Some(Value::Object(m)) = p.props.0.remove("channel_mentions") {
-            for (name, v) in m {
-                let Some(id) = v.get("id").and_then(Value::as_str).filter(|i| !i.is_empty()) else { continue };
-                let Ok(Some(c)) = self.channel(id).await else { continue };
-                mentions.push((name, v, c));
+        BroadcastPost { post: p, mentions: Arc::new(mentions), permalink }
+    }
+
+    /// Channel mentions with the channel each names; those without a channel id, or whose channel is gone, left out.
+    async fn mention_channels(&self, m: serde_json::Map<String, Value>) -> Mentions {
+        let mut out = vec![];
+        for (name, v) in m {
+            let Some(id) = v.get("id").and_then(Value::as_str).filter(|i| !i.is_empty()) else { continue };
+            let Ok(Some(c)) = self.channel(id).await else { continue };
+            out.push((name, v, c));
+        }
+        out
+    }
+
+    /// The mentions `user_id` may resolve.
+    async fn resolvable(&self, user_id: &str, mentions: &Mentions) -> serde_json::Map<String, Value> {
+        let mut m = serde_json::Map::new();
+        for (name, v, c) in mentions {
+            if self.user_resolve_mention(user_id, &c.id, &c.r#type, &c.team_id).await {
+                m.insert(name.clone(), v.clone());
             }
         }
-        BroadcastPost { post: p, mentions: Arc::new(mentions) }
+        m
     }
 }
 
-/// A post for its websocket events: `post` for every recipient, and with the channel mentions each recipient may
-/// resolve (`hook`).
+type Mentions = Vec<(String, Value, Arc<Channel>)>;
+
+/// A permalink preview taken out of a broadcast post: the `previewed_post` prop, the embed's preview, the channel
+/// it shows and its post's channel mentions.
+struct Permalink {
+    prop: String,
+    preview: PreviewPost,
+    channel: Arc<Channel>,
+    mentions: Mentions,
+}
+
+/// A post for its websocket events: `post` for every recipient, and with the channel mentions and the permalink
+/// preview each recipient may see (`hook`).
 pub struct BroadcastPost {
     pub post: Post,
-    mentions: Arc<Vec<(String, Value, Arc<Channel>)>>,
+    mentions: Arc<Mentions>,
+    permalink: Option<Arc<Permalink>>,
 }
 
 impl BroadcastPost {
-    /// `channelMentionsBroadcastHook`: the post's JSON for one recipient, when some mention is theirs to see.
+    /// `permalinkBroadcastHook` and `channelMentionsBroadcastHook`: the post's JSON for one recipient, when some
+    /// mention or the preview is theirs to see.
     pub fn hook(&self) -> Option<crate::hub::PostHook> {
-        if self.mentions.is_empty() {
+        if self.mentions.is_empty() && self.permalink.is_none() {
             return None;
         }
-        let (base, mentions) = (self.post.clone(), self.mentions.clone());
+        let (base, mentions, permalink) = (self.post.clone(), self.mentions.clone(), self.permalink.clone());
         Some(Arc::new(move |app: State, uid: String| {
-            let (mut p, mentions) = (base.clone(), mentions.clone());
+            let (mut p, mentions, permalink) = (base.clone(), mentions.clone(), permalink.clone());
             Box::pin(async move {
-                let mut m = serde_json::Map::new();
-                for (name, v, c) in mentions.iter() {
-                    if app.user_resolve_mention(&uid, &c.id, &c.r#type, &c.team_id).await {
-                        m.insert(name.clone(), v.clone());
+                let mut changed = false;
+                if let Some(pl) = permalink.as_deref()
+                    && app.user_read_channel(&uid, &pl.channel).await.0
+                {
+                    let mut preview = pl.preview.clone();
+                    if let Some(post) = preview.post.as_mut()
+                        && post.props.0.contains_key("channel_mentions")
+                    {
+                        let m = app.resolvable(&uid, &pl.mentions).await;
+                        if m.is_empty() {
+                            post.props.0.remove("channel_mentions");
+                        } else {
+                            post.props.0.insert("channel_mentions".into(), Value::Object(m));
+                        }
                     }
+                    p.props.0.insert("previewed_post".into(), pl.prop.clone().into());
+                    let embed = PostEmbed::new("permalink", "", Some(EmbedData::Permalink(Box::new(preview))));
+                    p.metadata.get_or_insert_with(Default::default).embeds.push(embed);
+                    changed = true;
                 }
-                if m.is_empty() {
+                let m = app.resolvable(&uid, &mentions).await;
+                if !m.is_empty() {
+                    p.props.0.insert("channel_mentions".into(), Value::Object(m));
+                    changed = true;
+                }
+                if !changed {
                     return None;
                 }
-                p.props.0.insert("channel_mentions".into(), Value::Object(m));
                 serde_json::to_string(&p).ok()
             })
         }))
+    }
+}
+
+/// `Post.Etag`.
+pub fn post_etag(p: &Post) -> String {
+    format!("{}.{}.{}", crate::SERVER_VERSION, p.id, p.update_at)
+}
+
+/// `PostList.Etag`: the first post in order and the post updated last (on a tie, the greatest id).
+pub fn list_etag(l: &PostList) -> String {
+    let (mut id, mut t) = ("0", 0i64);
+    for p in l.posts.values() {
+        if p.update_at > t || (p.update_at == t && p.id.as_str() > id) {
+            (id, t) = (&p.id, p.update_at);
+        }
+    }
+    let first = l.order.first().map_or("", String::as_str);
+    format!("{}.{first}.{id}.{t}", crate::SERVER_VERSION)
+}
+
+impl App {
+    /// `GetPostsEtag`: the channel's latest post update (now, when there is none) and its join/leave setting.
+    pub async fn posts_etag(&self, c: &Channel) -> String {
+        let t: Option<i64> =
+            sqlx::query_scalar("SELECT UpdateAt FROM Posts WHERE ChannelId = $1 ORDER BY UpdateAt DESC LIMIT 1")
+                .bind(&c.id)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten();
+        format!("{}.{}.{}", crate::SERVER_VERSION, t.unwrap_or_else(now_ms), c.disable_join_leave_messages)
     }
 }
 
@@ -1232,6 +1365,8 @@ pub struct CreateFlags {
     /// `FromIncomingWebhook`: `from_webhook`, and the display-identity overrides below re-injected.
     pub from_incoming_webhook: bool,
     pub allow_mm_blocks_actions: bool,
+    /// A plugin's post: `from_plugin`.
+    pub from_plugin: bool,
     pub override_username: String,
     pub override_icon_url: String,
     pub override_icon_emoji: String,
@@ -1273,10 +1408,13 @@ impl App {
                         None => self.single_post(&id, false).await.map(|p| (p, true)),
                     };
                     match found {
-                        Ok((p, _)) => return Ok(self.prepare_post(&p, Prep { is_edit: true, ..Default::default() }).await),
+                        Ok((p, _)) => return Ok(Post { metadata: None, ..p }),
                         Err(e) if e.status_code == 403 => {}
                         Err(e) => {
-                            return Err(AppError::internal("api.post.deduplicate_create_post.failed_to_get", e.detailed_error));
+                            return Err(AppError::internal(
+                                "api.post.deduplicate_create_post.failed_to_get",
+                                e.detailed_error,
+                            ));
                         }
                     }
                 }
@@ -1307,6 +1445,9 @@ impl App {
         }
         if flags.from_incoming_webhook {
             p.insert("from_webhook".into(), "true".into());
+        }
+        if flags.from_plugin {
+            p.insert("from_plugin".into(), "true".into());
         }
         if flags.force_notification {
             p.insert("force_notification".into(), crate::app::new_id().into());
@@ -1342,27 +1483,39 @@ impl App {
                     user_id: user.id.clone(),
                     root_id: post.root_id.clone(),
                     channel_id: c.id.clone(),
-                    message: format!("Channel notifications are disabled in {}. The {m} did not trigger any notifications.", c.name),
-                    props: sqlx::types::Json([("mentionHighlightDisabled".to_string(), Value::Bool(true))].into_iter().collect()),
+                    message: format!(
+                        "Channel notifications are disabled in {}. The {m} did not trigger any notifications.",
+                        c.name
+                    ),
+                    props: sqlx::types::Json(
+                        [("mentionHighlightDisabled".to_string(), Value::Bool(true))].into_iter().collect(),
+                    ),
                     ..Default::default()
                 });
             }
         }
         let mut parent: Option<PostList> = None;
         if !post.root_id.is_empty() {
-            let root_err = || AppError::bad_request("api.post.create_post.root_id.app_error", "Invalid RootId parameter.");
+            let root_err =
+                || AppError::bad_request("api.post.create_post.root_id.app_error", "Invalid RootId parameter.");
             let list = self.get_post_thread(&post.root_id, &GetPostsOpts::default()).await.map_err(|_| root_err())?;
             let Some(root) = list.posts.get(&post.root_id) else {
                 return Err(root_err());
             };
             if list.posts.values().any(|p| p.channel_id != post.channel_id) {
-                return Err(AppError::internal("api.post.create_post.channel_root_id.app_error", "invalid ChannelId for RootId"));
+                return Err(AppError::internal(
+                    "api.post.create_post.channel_root_id.app_error",
+                    "invalid ChannelId for RootId",
+                ));
             }
             if !root.root_id.is_empty() {
                 return Err(root_err());
             }
             if root.r#type == kind::BURN_ON_READ {
-                return Err(AppError::bad_request("api.post.create_post.burn_on_read.app_error", "Cannot reply to this post."));
+                return Err(AppError::bad_request(
+                    "api.post.create_post.burn_on_read.app_error",
+                    "Cannot reply to this post.",
+                ));
             }
             parent = Some(list);
         }
@@ -1374,13 +1527,12 @@ impl App {
         // getEmbedsAndImages before saving: a permalink names the post it previews.
         let mut probe = post.clone();
         self.embeds_and_images(&mut probe, true).await;
-        if let Some(pid) = probe
-            .metadata
-            .as_ref()
-            .and_then(|m| m.embeds.iter().find(|e| e.r#type == "permalink"))
-            .and_then(|e| match &e.data {
-                Some(EmbedData::Permalink(pp)) => Some(pp.post_id.as_str()),
-                _ => None,
+        if let Some(pid) =
+            probe.metadata.as_ref().and_then(|m| m.embeds.iter().find(|e| e.r#type == "permalink")).and_then(|e| {
+                match &e.data {
+                    Some(EmbedData::Permalink(pp)) => Some(pp.post_id.as_str()),
+                    _ => None,
+                }
             })
         {
             post.props.0.insert("previewed_post".into(), pid.into());
@@ -1391,9 +1543,9 @@ impl App {
         if !file_ids.is_empty() {
             let attached = self.attach_files_to_post(&post.id, &post.channel_id, &post.user_id, &file_ids).await?;
             if attached.len() != file_ids.len() && !post.is_remote() {
-                post.file_ids = crate::model::JsonText(attached.clone());
+                post.file_ids = crate::model::FileIds(attached.clone(), attached.is_empty());
                 sqlx::query("UPDATE Posts SET FileIds = $1 WHERE Id = $2")
-                    .bind(crate::model::JsonText(attached))
+                    .bind(&post.file_ids)
                     .bind(&post.id)
                     .execute(&self.db)
                     .await?;
@@ -1401,7 +1553,8 @@ impl App {
             self.caches.file_infos.remove(&post.id);
         }
         let mut rpost = self.prepare_post(post, Prep { is_edit: true, ..Default::default() }).await;
-        rpost.metadata.get_or_insert_with(Default::default).embeds = probe.metadata.map(|m| m.embeds).unwrap_or_default();
+        rpost.metadata.get_or_insert_with(Default::default).embeds =
+            probe.metadata.map(|m| m.embeds).unwrap_or_default();
         if let Some(md) = rpost.metadata.as_mut()
             && md.priority.is_none()
         {
@@ -1411,7 +1564,11 @@ impl App {
         }
         if self.cfg.bool("ServiceSettings.ThreadAutoFollow") && !rpost.root_id.is_empty() {
             let _ = self
-                .maintain_membership(&user.id, &rpost.root_id, crate::threads::MembershipOpts { following: true, update_following: true, ..Default::default() })
+                .maintain_membership(
+                    &user.id,
+                    &rpost.root_id,
+                    crate::threads::MembershipOpts { following: true, update_following: true, ..Default::default() },
+                )
                 .await;
         }
         // handlePostEvents
@@ -1420,7 +1577,9 @@ impl App {
             self.caches.pinned_count.remove(&c.id);
         }
         self.invalidate_channel_posts(&c.id);
-        if let Err(e) = crate::notify::send_notifications(self, &rpost, c, &user, parent.as_ref(), flags.set_online).await {
+        if let Err(e) =
+            crate::notify::send_notifications(self, &rpost, c, &user, parent.as_ref(), flags.set_online).await
+        {
             eprintln!("send notifications for {}: {}", rpost.id, e.detailed_error);
         }
         if flags.trigger_webhooks {
@@ -1445,12 +1604,14 @@ impl App {
                 Some(c) => c,
                 None => {
                     own = self.channel(&post.channel_id).await?.ok_or_else(|| {
-                        AppError::bad_request("api.context.invalid_param.app_error", "").with_param("Name", "post.channel_id")
+                        AppError::bad_request("api.context.invalid_param.app_error", "")
+                            .with_param("Name", "post.channel_id")
                     })?;
                     &*own
                 }
             };
-            let team_id = if c.team_id.is_empty() { post.prop_str("current_team_id").to_string() } else { c.team_id.clone() };
+            let team_id =
+                if c.team_id.is_empty() { post.prop_str("current_team_id").to_string() } else { c.team_id.clone() };
             post.props.0.remove("current_team_id");
             let found: Vec<(String, String, String, String, String, String)> = sqlx::query_as(
                 "SELECT c.Id, c.Name, c.DisplayName, c.Type::text, c.TeamId, t.Name FROM Channels c JOIN Teams t ON t.Id = c.TeamId
@@ -1478,7 +1639,10 @@ impl App {
     /// `UpdateAt`.
     pub async fn save_post(&self, post: &mut Post) -> ApiResult<()> {
         if !post.id.is_empty() && !post.is_remote() {
-            return Err(AppError::bad_request("app.post.save.existing.app_error", "You cannot update an existing post."));
+            return Err(AppError::bad_request(
+                "app.post.save.existing.app_error",
+                "You cannot update an existing post.",
+            ));
         }
         post.pre_save(now_ms());
         if post.remote_id.is_none() {
@@ -1533,12 +1697,11 @@ impl App {
                 .bind(&post.root_id)
                 .execute(&self.db)
                 .await;
-            post.reply_count =
-                sqlx::query_scalar("SELECT COUNT(Id) FROM Posts WHERE RootId = $1 AND DeleteAt = 0")
-                    .bind(&post.root_id)
-                    .fetch_one(&self.db)
-                    .await
-                    .unwrap_or(0);
+            post.reply_count = sqlx::query_scalar("SELECT COUNT(Id) FROM Posts WHERE RootId = $1 AND DeleteAt = 0")
+                .bind(&post.root_id)
+                .fetch_one(&self.db)
+                .await
+                .unwrap_or(0);
         }
         Ok(())
     }
@@ -1546,7 +1709,9 @@ impl App {
     /// `Post.IsValid`.
     /// `Post.IsValid(maxPostSize)`.
     pub(crate) fn validate_post(&self, p: &Post, max_post_size: usize) -> ApiResult<()> {
-        let bad = |what: &str| AppError::bad_request(&format!("model.post.is_valid.{what}.app_error"), &format!("Invalid {what}."));
+        let bad = |what: &str| {
+            AppError::bad_request(&format!("model.post.is_valid.{what}.app_error"), &format!("Invalid {what}."))
+        };
         if !is_valid_id(&p.id) {
             return Err(bad("id"));
         }
@@ -1582,7 +1747,8 @@ impl App {
         if p.create_at == 0 {
             p.create_at = now_ms();
         }
-        let mut p = self.prepare_post(&p, Prep { is_new: true, ..Default::default() }).await;
+        let mut p =
+            self.prepare_post_full(&p, Prep { is_new: true, include_priority: true, ..Default::default() }).await;
         if (p.props.0.contains_key("attachments") || p.props.0.contains_key("mm_blocks_actions"))
             && let Ok(k) = self.integration_keys().await
         {
@@ -1600,59 +1766,64 @@ impl App {
 /// `SqlStore.GetMaxPostSize` on a current schema (Posts.Message is varchar(65535)).
 pub const MAX_POST_SIZE: usize = 16383;
 
+const LOCK_THREAD: &str = "SELECT COALESCE(Participants, '[]'), COALESCE(ReplyCount, 0), COALESCE(LastReplyAt, 0) \
+                           FROM Threads WHERE PostId = $1 FOR UPDATE";
+
 /// `updateThreadsFromPosts` for one reply, in the saving transaction.
 async fn update_thread_from_post(tx: &mut sqlx::PgConnection, post: &Post) -> ApiResult<()> {
-    let found: Option<(sqlx::types::Json<Vec<String>>, i64, i64)> = sqlx::query_as(
-        "SELECT COALESCE(Participants, '[]'), COALESCE(ReplyCount, 0), COALESCE(LastReplyAt, 0) FROM Threads WHERE PostId = $1",
-    )
-    .bind(&post.root_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    match found {
-        None => {
-            let parts: Vec<(String,)> = sqlx::query_as(
-                "SELECT UserId FROM Posts WHERE RootId = $1 AND DeleteAt = 0 GROUP BY UserId ORDER BY MAX(CreateAt) ASC",
-            )
-            .bind(&post.root_id)
-            .fetch_all(&mut *tx)
-            .await?;
-            let (count, last): (i64, i64) = sqlx::query_as(
-                "SELECT COUNT(Id), COALESCE(MAX(CreateAt), 0) FROM Posts WHERE RootId = $1 AND DeleteAt = 0",
-            )
-            .bind(&post.root_id)
-            .fetch_one(&mut *tx)
-            .await?;
-            let team: String = sqlx::query_scalar("SELECT COALESCE(TeamId, '') FROM Channels WHERE Id = $1")
-                .bind(&post.channel_id)
-                .fetch_optional(&mut *tx)
-                .await?
-                .unwrap_or_default();
-            let parts: Vec<String> = parts.into_iter().map(|p| p.0).collect();
-            sqlx::query(
-                "INSERT INTO Threads (PostId, ChannelId, ReplyCount, LastReplyAt, Participants, ThreadTeamId) VALUES ($1, $2, $3, $4, $5, $6)",
-            )
-            .bind(&post.root_id)
+    let mut found: Option<(sqlx::types::Json<Vec<String>>, i64, i64)> =
+        sqlx::query_as(LOCK_THREAD).bind(&post.root_id).fetch_optional(&mut *tx).await?;
+    if found.is_none() {
+        let parts: Vec<(String,)> = sqlx::query_as(
+            "SELECT UserId FROM Posts WHERE RootId = $1 AND DeleteAt = 0 GROUP BY UserId ORDER BY MAX(CreateAt) ASC",
+        )
+        .bind(&post.root_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        let (count, last): (i64, i64) = sqlx::query_as(
+            "SELECT COUNT(Id), COALESCE(MAX(CreateAt), 0) FROM Posts WHERE RootId = $1 AND DeleteAt = 0",
+        )
+        .bind(&post.root_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let team: String = sqlx::query_scalar("SELECT COALESCE(TeamId, '') FROM Channels WHERE Id = $1")
             .bind(&post.channel_id)
-            .bind(count)
-            .bind(last)
-            .bind(sqlx::types::Json(parts))
-            .bind(team)
-            .execute(&mut *tx)
-            .await?;
+            .fetch_optional(&mut *tx)
+            .await?
+            .unwrap_or_default();
+        let parts: Vec<String> = parts.into_iter().map(|p| p.0).collect();
+        let created = sqlx::query(
+            "INSERT INTO Threads (PostId, ChannelId, ReplyCount, LastReplyAt, Participants, ThreadTeamId)
+             VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (PostId) DO NOTHING",
+        )
+        .bind(&post.root_id)
+        .bind(&post.channel_id)
+        .bind(count)
+        .bind(last)
+        .bind(sqlx::types::Json(parts))
+        .bind(team)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+        if created {
+            return Ok(());
         }
-        Some((mut parts, count, last)) => {
-            parts.0.retain(|u| *u != post.user_id);
-            parts.0.push(post.user_id.clone());
-            sqlx::query("UPDATE Threads SET ChannelId = $1, ReplyCount = $2, LastReplyAt = $3, Participants = $4 WHERE PostId = $5")
-                .bind(&post.channel_id)
-                .bind(count + 1)
-                .bind(last.max(post.create_at))
-                .bind(parts)
-                .bind(&post.root_id)
-                .execute(&mut *tx)
-                .await?;
-        }
+        found = sqlx::query_as(LOCK_THREAD).bind(&post.root_id).fetch_optional(&mut *tx).await?;
     }
+    let Some((mut parts, count, last)) = found else { return Ok(()) };
+    parts.0.retain(|u| *u != post.user_id);
+    parts.0.push(post.user_id.clone());
+    sqlx::query(
+        "UPDATE Threads SET ChannelId = $1, ReplyCount = $2, LastReplyAt = $3, Participants = $4 WHERE PostId = $5",
+    )
+    .bind(&post.channel_id)
+    .bind(count + 1)
+    .bind(last.max(post.create_at))
+    .bind(parts)
+    .bind(&post.root_id)
+    .execute(&mut *tx)
+    .await?;
     Ok(())
 }
 
@@ -1677,23 +1848,41 @@ impl App {
     }
 
     /// `UpdatePost` with `AllowMmBlocksActionsUpdate` (an integration's answer may replace its own actions).
-    pub async fn update_post_opts(&self, s: &Session, received: Post, keep_props: bool, allow_mm_blocks: bool) -> ApiResult<Post> {
+    pub async fn update_post_opts(
+        &self,
+        s: &Session,
+        received: Post,
+        keep_props: bool,
+        allow_mm_blocks: bool,
+    ) -> ApiResult<Post> {
         let mut received = received;
         received.remote_id = None;
         received.sanitize_props();
         let old = self.get_single_post(&received.id, false).await?.ok_or_else(post_not_found)?;
         if old.delete_at != 0 {
-            return Err(AppError::bad_request("api.post.update_post.permissions_details.app_error", "Already deleted id={{.PostId}}."));
+            return Err(AppError::bad_request(
+                "api.post.update_post.permissions_details.app_error",
+                "Already deleted id={{.PostId}}.",
+            ));
         }
         if old.r#type == kind::BURN_ON_READ {
-            return Err(AppError::bad_request("api.post.update_post.burn_on_read.app_error", "Cannot update this post."));
+            return Err(AppError::bad_request(
+                "api.post.update_post.burn_on_read.app_error",
+                "Cannot update this post.",
+            ));
         }
         if old.is_system_message() {
-            return Err(AppError::bad_request("api.post.update_post.system_message.app_error", "Unable to update system message."));
+            return Err(AppError::bad_request(
+                "api.post.update_post.system_message.app_error",
+                "Unable to update system message.",
+            ));
         }
         let c = self.channel_or_404(&old.channel_id).await?;
         if c.delete_at != 0 {
-            return Err(AppError::bad_request("api.post.update_post.can_not_update_post_in_deleted.error", "Can not update a post in a deleted channel."));
+            return Err(AppError::bad_request(
+                "api.post.update_post.can_not_update_post_in_deleted.error",
+                "Can not update a post in a deleted channel.",
+            ));
         }
         let mut new = old.clone();
         let now = now_ms();
@@ -1723,7 +1912,8 @@ impl App {
                 new.props.0.insert(k.into(), v.clone());
             }
         }
-        match old.prop("mm_blocks_actions").filter(|_| !allow_mm_blocks || received.prop("mm_blocks_actions").is_none()) {
+        match old.prop("mm_blocks_actions").filter(|_| !allow_mm_blocks || received.prop("mm_blocks_actions").is_none())
+        {
             Some(v) => {
                 new.props.0.insert("mm_blocks_actions".into(), v.clone());
             }
@@ -1756,8 +1946,10 @@ impl App {
         if !added.is_empty() || !removed.is_empty() {
             self.caches.file_infos.remove(&new.id);
         }
-        new.file_ids = crate::model::JsonText(file_ids);
-        if new.edit_at == old.edit_at && (old.file_ids != new.file_ids || old.prop("attachments") != new.prop("attachments")) {
+        new.file_ids = crate::model::FileIds(file_ids, false);
+        if new.edit_at == old.edit_at
+            && (old.file_ids != new.file_ids || old.prop("attachments") != new.prop("attachments"))
+        {
             new.edit_at = now;
         }
         self.fill_in_post_props(&mut new, None).await?;
@@ -1768,6 +1960,7 @@ impl App {
         // SqlPostStore.Update (PreCommit)
         crate::integrations::generate_action_ids(&mut new.props.0);
         new.update_at = now_ms();
+        new.strip_nul();
         self.validate_post(&new, self.max_post_size().await as usize)?;
         let mut tx = self.db.begin().await?;
         sqlx::query(
@@ -1796,9 +1989,17 @@ impl App {
         .execute(&mut *tx)
         .await?;
         let t = now_ms();
-        sqlx::query("UPDATE Channels SET LastPostAt = $1 WHERE Id = $2 AND LastPostAt < $1").bind(t).bind(&new.channel_id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE Channels SET LastPostAt = $1 WHERE Id = $2 AND LastPostAt < $1")
+            .bind(t)
+            .bind(&new.channel_id)
+            .execute(&mut *tx)
+            .await?;
         if !new.root_id.is_empty() {
-            sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2 AND UpdateAt < $1").bind(t).bind(&new.root_id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2 AND UpdateAt < $1")
+                .bind(t)
+                .bind(&new.root_id)
+                .execute(&mut *tx)
+                .await?;
         }
         let mut hist = old.clone();
         hist.delete_at = new.update_at;
@@ -1813,7 +2014,8 @@ impl App {
             self.caches.pinned_count.remove(&new.channel_id);
         }
 
-        let mut rpost = self.prepare_post_full(&new, Prep { is_edit: true, include_priority: true, ..Default::default() }).await;
+        let mut rpost =
+            self.prepare_post_full(&new, Prep { is_edit: true, include_priority: true, ..Default::default() }).await;
         rpost.is_following = None;
         rpost.reply_count = old.reply_count;
         let bpost = self.post_for_broadcast(&rpost).await;
@@ -1830,11 +2032,17 @@ impl App {
     pub async fn patch_post(&self, s: &Session, post_id: &str, mut patch: PostPatch) -> ApiResult<Post> {
         let mut post = self.single_post(post_id, false).await?;
         if post.r#type == kind::BURN_ON_READ {
-            return Err(AppError::bad_request("api.post.patch_post.can_not_update_burn_on_read_post.error", "Cannot update this post."));
+            return Err(AppError::bad_request(
+                "api.post.patch_post.can_not_update_burn_on_read_post.error",
+                "Cannot update this post.",
+            ));
         }
         let c = self.channel_or_404(&post.channel_id).await?;
         if c.delete_at != 0 {
-            return Err(AppError::bad_request("api.post.patch_post.can_not_update_post_in_deleted.error", "Can not update a post in a deleted channel."));
+            return Err(AppError::bad_request(
+                "api.post.patch_post.can_not_update_post_in_deleted.error",
+                "Can not update a post in a deleted channel.",
+            ));
         }
         if !self.user_channel_perm(&post.user_id, &post.channel_id, perm::USE_CHANNEL_MENTIONS).await.0
             && let Some(props) = patch.props.as_mut()
@@ -1851,7 +2059,7 @@ impl App {
             post.props = sqlx::types::Json(v);
         }
         if let Some(v) = patch.file_ids.take() {
-            post.file_ids = crate::model::JsonText(v);
+            post.file_ids = crate::model::FileIds(v, false);
         }
         if let Some(v) = patch.has_reactions {
             post.has_reactions = v;
@@ -1867,7 +2075,10 @@ impl App {
             .ok_or_else(|| AppError::bad_request("app.post.get.app_error", "Unable to get the post."))?;
         let c = self.channel_or_404(&post.channel_id).await?;
         if c.delete_at != 0 {
-            return Err(AppError::bad_request("api.post.delete_post.can_not_delete_post_in_deleted.error", "Can not delete a post in a deleted channel."));
+            return Err(AppError::bad_request(
+                "api.post.delete_post.can_not_delete_post_in_deleted.error",
+                "Can not delete a post in a deleted channel.",
+            ));
         }
         let now = now_ms();
         let mut tx = self.db.begin().await?;
@@ -1881,18 +2092,25 @@ impl App {
         .execute(&mut *tx)
         .await?;
         if post.root_id.is_empty() {
-            sqlx::query("UPDATE Threads SET ThreadDeleteAt = $1 WHERE PostId = $2").bind(now).bind(post_id).execute(&mut *tx).await?;
-            sqlx::query("UPDATE FileInfo SET DeleteAt = $1 FROM Posts WHERE FileInfo.PostId = Posts.Id AND Posts.RootId = $2")
+            sqlx::query("UPDATE Threads SET ThreadDeleteAt = $1 WHERE PostId = $2")
                 .bind(now)
                 .bind(post_id)
                 .execute(&mut *tx)
                 .await?;
+            sqlx::query(
+                "UPDATE FileInfo SET DeleteAt = $1 FROM Posts WHERE FileInfo.PostId = Posts.Id AND Posts.RootId = $2",
+            )
+            .bind(now)
+            .bind(post_id)
+            .execute(&mut *tx)
+            .await?;
         } else {
-            let mine: i64 = sqlx::query_scalar("SELECT COUNT(Id) FROM Posts WHERE RootId = $1 AND UserId = $2 AND DeleteAt = 0")
-                .bind(&post.root_id)
-                .bind(&post.user_id)
-                .fetch_one(&mut *tx)
-                .await?;
+            let mine: i64 =
+                sqlx::query_scalar("SELECT COUNT(Id) FROM Posts WHERE RootId = $1 AND UserId = $2 AND DeleteAt = 0")
+                    .bind(&post.root_id)
+                    .bind(&post.user_id)
+                    .fetch_one(&mut *tx)
+                    .await?;
             // updateThreadAfterReplyDeletion: the poster leaves the participants with their last reply.
             let parts = if mine == 0 { "Participants = Participants - $2::text, " } else { "" };
             let sql = format!(
@@ -1905,15 +2123,27 @@ impl App {
                 q = q.bind(&post.user_id);
             }
             q.execute(&mut *tx).await?;
-            sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2").bind(now).bind(&post.root_id).execute(&mut *tx).await?;
+            sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2")
+                .bind(now)
+                .bind(&post.root_id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         if !post.file_ids.0.is_empty() {
-            let _ = sqlx::query("UPDATE FileInfo SET DeleteAt = $1 WHERE PostId = $2").bind(now).bind(post_id).execute(&self.db).await;
+            let _ = sqlx::query("UPDATE FileInfo SET DeleteAt = $1 WHERE PostId = $2")
+                .bind(now)
+                .bind(post_id)
+                .execute(&self.db)
+                .await;
             self.caches.file_infos.remove(post_id);
         }
         if post.root_id.is_empty() {
-            let _ = sqlx::query("UPDATE PersistentNotifications SET DeleteAt = $1 WHERE PostId = $2").bind(now).bind(post_id).execute(&self.db).await;
+            let _ = sqlx::query("UPDATE PersistentNotifications SET DeleteAt = $1 WHERE PostId = $2")
+                .bind(now)
+                .bind(post_id)
+                .execute(&self.db)
+                .await;
         }
         // CleanUpAfterPostDeletion
         let mut admin = serde_json::to_value(&post).unwrap();
@@ -1922,10 +2152,21 @@ impl App {
         self.hub.publish(
             "post_deleted",
             admin,
-            Broadcast { channel_id: post.channel_id.clone(), sanitized: Some(json!({"post": user})), ..Default::default() },
+            Broadcast {
+                channel_id: post.channel_id.clone(),
+                sanitized: Some(json!({"post": user})),
+                ..Default::default()
+            },
         );
-        let _ = sqlx::query("DELETE FROM Preferences WHERE Category = 'flagged_post' AND Name = $1").bind(post_id).execute(&self.db).await;
-        let _ = sqlx::query("DELETE FROM Drafts WHERE ChannelId = $1 AND RootId = $2").bind(&post.channel_id).bind(post_id).execute(&self.db).await;
+        let _ = sqlx::query("DELETE FROM Preferences WHERE Category = 'flagged_post' AND Name = $1")
+            .bind(post_id)
+            .execute(&self.db)
+            .await;
+        let _ = sqlx::query("DELETE FROM Drafts WHERE ChannelId = $1 AND RootId = $2")
+            .bind(&post.channel_id)
+            .bind(post_id)
+            .execute(&self.db)
+            .await;
         if !post.root_id.is_empty() {
             let _ = crate::notify::remove_notifications(self, &post, &c).await;
         }
@@ -1993,24 +2234,43 @@ async fn create_post_h(
     }
     if let Some(pr) = post.priority() {
         if !app.post_priority_on() {
-            return Err(AppError::new(StatusCode::FORBIDDEN, "api.post.post_priority.priority_post_not_allowed_for_user.request_error", "Post priority is not allowed."));
+            return Err(AppError::new(
+                StatusCode::FORBIDDEN,
+                "api.post.post_priority.priority_post_not_allowed_for_user.request_error",
+                "Post priority is not allowed.",
+            ));
         }
         if !post.root_id.is_empty() {
-            return Err(AppError::bad_request("api.post.post_priority.priority_post_only_allowed_for_root_post.request_error", "Post priority is only allowed for root posts."));
+            return Err(AppError::bad_request(
+                "api.post.post_priority.priority_post_only_allowed_for_root_post.request_error",
+                "Post priority is only allowed for root posts.",
+            ));
         }
         if pr.requested_ack == Some(true) || pr.persistent_notifications == Some(true) {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "license_error.feature_unavailable", "Feature is not available for the current license."));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "license_error.feature_unavailable",
+                "Feature is not available for the current license.",
+            ));
         }
     }
     if post.r#type == kind::BURN_ON_READ || post.r#type == "card" {
-        return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.post.fill_in_post_props.burn_on_read.license.app_error", "Feature is not available for the current license."));
+        return Err(AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "api.post.fill_in_post_props.burn_on_read.license.app_error",
+            "Feature is not available for the current license.",
+        ));
     }
     let n = post.message.chars().count();
     let max = app.max_post_size().await as usize;
     if n > max {
-        return Err(AppError::bad_request("model.post.is_valid.message_length.app_error", &format!("Post Message property is longer than the maximum permitted length: {n} > {max}.")));
+        return Err(AppError::bad_request(
+            "model.post.is_valid.message_length.app_error",
+            &format!("Post Message property is longer than the maximum permitted length: {n} > {max}."),
+        ));
     }
-    let set_online = q.set_online.as_deref().filter(|s| !s.is_empty()).map(|s| parse_bool(s).unwrap_or(true)).unwrap_or(true);
+    let set_online =
+        q.set_online.as_deref().filter(|s| !s.is_empty()).map(|s| parse_bool(s).unwrap_or(true)).unwrap_or(true);
     let silent = match q.silent.as_deref().filter(|s| !s.is_empty()) {
         Some(v) => parse_bool(v).ok_or_else(|| AppError::invalid_param("silent"))?,
         None => false,
@@ -2018,14 +2278,28 @@ async fn create_post_h(
     // CreatePostAsUserWithFlags
     let c = app.channel(&post.channel_id).await?.ok_or_else(|| AppError::invalid_param("post.channel_id"))?;
     if c.delete_at != 0 {
-        return Err(AppError::bad_request("api.post.create_post.can_not_post_to_deleted.error", "Can not post to deleted channel."));
+        return Err(AppError::bad_request(
+            "api.post.create_post.can_not_post_to_deleted.error",
+            "Can not post to deleted channel.",
+        ));
     }
     let user = app.user(&s.user_id).await?.ok_or_else(crate::users::missing_account)?;
     if silent && !user.is_bot && !s.is_oauth {
-        return Err(AppError::new(StatusCode::FORBIDDEN, "api.post.create_post.silent_notification.app_error", "Only integrations can send silent notifications."));
+        return Err(AppError::new(
+            StatusCode::FORBIDDEN,
+            "api.post.create_post.silent_notification.app_error",
+            "Only integrations can send silent notifications.",
+        ));
     }
     let flags = CreateFlags { set_online, trigger_webhooks: true, silent, ..Default::default() };
-    let rp = app.create_post_in(post, &c, flags, Some(&s)).await?;
+    let rp = app.create_post_in(post, &c, flags, Some(&s)).await.map_err(|mut e| {
+        // A bad root is the request's fault here.
+        if e.id == "api.post.create_post.root_id.app_error" || e.id == "api.post.create_post.channel_root_id.app_error"
+        {
+            e.status_code = 400;
+        }
+        e
+    })?;
     let from_bot_or_hook = rp.prop("from_webhook").is_some() || rp.prop("from_bot").is_some();
     let crt = app.crt_for_user(&s.user_id).await;
     if !from_bot_or_hook && !(crt && !rp.root_id.is_empty()) {
@@ -2071,8 +2345,9 @@ async fn posts_for_channel(
     St(app): St<State>,
     Auth(s): Auth,
     Path(channel_id): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<PostsQuery>,
-) -> ApiResult<Json<PostList>> {
+) -> ApiResult<Response> {
     if !is_valid_id(&channel_id) {
         return Err(AppError::invalid_url_param("channel_id"));
     }
@@ -2108,18 +2383,43 @@ async fn posts_for_channel(
         exclude_membership: excludes_membership(&c),
         ..Default::default()
     };
+    // Pages (not `since`) carry the channel's ETag; a client that has this version gets 304.
+    let etag = if since > 0 { None } else { Some(app.posts_etag(&c).await) };
+    if let Some(e) = &etag
+        && let Some(r) = crate::teams::not_modified(&headers, e)
+    {
+        return Ok(r);
+    }
     let list = if since > 0 {
         app.get_posts_since(&o, since).await?
     } else if !q.after.is_empty() {
-        app.get_posts_around(&GetPostsOpts { post_id: q.after.clone(), collapsed_threads_extended: false, ..o.clone() }, false).await?
+        app.get_posts_around(
+            &GetPostsOpts { post_id: q.after.clone(), collapsed_threads_extended: false, ..o.clone() },
+            false,
+        )
+        .await?
     } else if !q.before.is_empty() {
         app.get_posts_around(&GetPostsOpts { post_id: q.before.clone(), ..o.clone() }, true).await?
     } else {
         app.get_posts(&o).await?
     };
     let mut list = app.prepare_list(list).await;
-    app.add_cursor_ids(&mut list, &q.after, &q.before, since, page, per_page, o.collapsed_threads, o.exclude_membership).await;
-    Ok(Json(app.sanitize_list_for_user(list, &s.user_id).await))
+    app.add_cursor_ids(
+        &mut list,
+        &q.after,
+        &q.before,
+        since,
+        page,
+        per_page,
+        o.collapsed_threads,
+        o.exclude_membership,
+    )
+    .await;
+    let body = Json(app.sanitize_list_for_user(list, &s.user_id).await);
+    Ok(match etag {
+        Some(e) => crate::teams::with_etag(body, &e),
+        None => body.into_response(),
+    })
 }
 
 #[derive(Deserialize, Default)]
@@ -2132,8 +2432,9 @@ async fn get_post(
     St(app): St<State>,
     Auth(s): Auth,
     Path(post_id): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<IncludeDeleted>,
-) -> ApiResult<Json<Post>> {
+) -> ApiResult<Response> {
     if !is_valid_id(&post_id) {
         return Err(AppError::invalid_url_param("post_id"));
     }
@@ -2142,8 +2443,12 @@ async fn get_post(
         return Err(AppError::forbidden_perm(perm::MANAGE_SYSTEM));
     }
     let (p, _) = app.post_if_authorized(&s, &post_id, include_deleted).await?;
+    let etag = post_etag(&p);
+    if let Some(r) = crate::teams::not_modified(&headers, &etag) {
+        return Ok(r);
+    }
     let p = app.prepare_post_full(&p, Prep { include_priority: true, ..Default::default() }).await;
-    Ok(Json(app.sanitize_for_user(p, &s.user_id).await))
+    Ok(crate::teams::with_etag(Json(app.sanitize_for_user(p, &s.user_id).await), &etag))
 }
 
 /// `model.SortedArrayFromJSON`: a JSON array of strings (`null` is empty), sorted without duplicates, or Go's
@@ -2163,7 +2468,10 @@ async fn posts_by_ids(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes
         return Err(AppError::invalid_param("post_ids"));
     }
     if ids.len() > 1000 {
-        return Err(AppError::bad_request("api.post.posts_by_ids.invalid_body.request_error", "The number of post ids exceeds the maximum."));
+        return Err(AppError::bad_request(
+            "api.post.posts_by_ids.invalid_body.request_error",
+            "The number of post ids exceeds the maximum.",
+        ));
     }
     let sql = format!(
         "SELECT {}, {} FROM Posts p WHERE p.Id = ANY($1) ORDER BY p.CreateAt DESC",
@@ -2219,8 +2527,9 @@ async fn get_post_thread(
     St(app): St<State>,
     Auth(s): Auth,
     Path(post_id): Path<String>,
+    headers: HeaderMap,
     Query(q): Query<ThreadQuery>,
-) -> ApiResult<Json<PostList>> {
+) -> ApiResult<Response> {
     if !is_valid_id(&post_id) {
         return Err(AppError::invalid_url_param("post_id"));
     }
@@ -2270,8 +2579,12 @@ async fn get_post_thread(
         return Err(AppError::invalid_url_param("post_id"));
     }
     app.post_if_authorized(&s, &post_id, false).await?;
+    let etag = list_etag(&list);
+    if let Some(r) = crate::teams::not_modified(&headers, &etag) {
+        return Ok(r);
+    }
     let list = app.prepare_list(list).await;
-    Ok(Json(app.sanitize_list_for_user(list, &s.user_id).await))
+    Ok(crate::teams::with_etag(Json(app.sanitize_list_for_user(list, &s.user_id).await), &etag))
 }
 
 /// `postEditTimeLimitExpired`.
@@ -2294,7 +2607,8 @@ async fn update_post_h(
     if let Some(o) = post.as_object_mut() {
         o.remove("metadata");
     }
-    let mut post: Post = serde_json::from_value(post).map_err(|e| AppError::invalid_param("post").detail(e.to_string()))?;
+    let mut post: Post =
+        serde_json::from_value(post).map_err(|e| AppError::invalid_param("post").detail(e.to_string()))?;
     post.delete_at = 0;
     if post.id != post_id {
         return Err(AppError::invalid_param("id"));
@@ -2313,10 +2627,16 @@ async fn update_post_h(
     if edit_time_expired(&app, &original)
         && (post.message != original.message || post.file_ids != original.file_ids || post.props != original.props)
     {
-        return Err(AppError::bad_request("api.post.update_post.permissions_time_limit.app_error", "Post edit is only allowed for a limited time."));
+        return Err(AppError::bad_request(
+            "api.post.update_post.permissions_time_limit.app_error",
+            "Post edit is only allowed for a limited time.",
+        ));
     }
     if post.message.chars().count() > app.max_post_size().await as usize {
-        return Err(AppError::bad_request("model.post.is_valid.message_length.app_error", "Post Message property is longer than the maximum permitted length."));
+        return Err(AppError::bad_request(
+            "model.post.is_valid.message_length.app_error",
+            "Post Message property is longer than the maximum permitted length.",
+        ));
     }
     if s.user_id != original.user_id && !app.channel_perm(&s, &original.channel_id, perm::EDIT_OTHERS_POSTS).await?.0 {
         return Err(AppError::forbidden_perm(perm::EDIT_OTHERS_POSTS));
@@ -2340,13 +2660,20 @@ async fn patch_post_h(
         return Err(AppError::forbidden_perm(permission));
     }
     check_create_post(&app, &s, &original.channel_id).await?;
-    let more_than_pin = patch.message.is_some() || patch.props.is_some() || patch.file_ids.is_some() || patch.has_reactions.is_some();
+    let more_than_pin =
+        patch.message.is_some() || patch.props.is_some() || patch.file_ids.is_some() || patch.has_reactions.is_some();
     if edit_time_expired(&app, &original) && more_than_pin {
-        return Err(AppError::bad_request("api.post.update_post.permissions_time_limit.app_error", "Post edit is only allowed for a limited time."));
+        return Err(AppError::bad_request(
+            "api.post.update_post.permissions_time_limit.app_error",
+            "Post edit is only allowed for a limited time.",
+        ));
     }
     let max = app.max_post_size().await as usize;
     if patch.message.as_ref().is_some_and(|m| m.chars().count() > max) {
-        return Err(AppError::bad_request("model.post.is_valid.message_length.app_error", "Post Message property is longer than the maximum permitted length."));
+        return Err(AppError::bad_request(
+            "model.post.is_valid.message_length.app_error",
+            "Post Message property is longer than the maximum permitted length.",
+        ));
     }
     if let Some(ids) = &patch.file_ids {
         let added = ids.iter().any(|i| !original.file_ids.0.contains(i));
@@ -2374,7 +2701,8 @@ async fn save_pinned(app: &State, s: &Session, post_id: &str, pinned: bool) -> A
     if !is_valid_id(post_id) {
         return Err(AppError::invalid_url_param("post_id"));
     }
-    let post = app.single_post(post_id, false).await.map_err(|_| AppError::forbidden_perm(perm::READ_CHANNEL_CONTENT))?;
+    let post =
+        app.single_post(post_id, false).await.map_err(|_| AppError::forbidden_perm(perm::READ_CHANNEL_CONTENT))?;
     let c = app.channel_or_404(&post.channel_id).await?;
     if !app.user_read_channel(&s.user_id, &c).await.0 {
         return Err(AppError::forbidden_perm(perm::READ_CHANNEL_CONTENT));
@@ -2392,7 +2720,12 @@ async fn unpin_post(St(app): St<State>, Auth(s): Auth, Path(post_id): Path<Strin
 }
 
 /// `getPinnedPosts`.
-async fn pinned_posts(St(app): St<State>, Auth(s): Auth, Path(channel_id): Path<String>) -> ApiResult<Json<PostList>> {
+async fn pinned_posts(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(channel_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
     if !is_valid_id(&channel_id) {
         return Err(AppError::invalid_url_param("channel_id"));
     }
@@ -2411,8 +2744,12 @@ async fn pinned_posts(St(app): St<State>, Auth(s): Auth, Path(channel_id): Path<
         list.add_ordered(p);
     }
     app.filter_membership(&mut list).await?;
+    let etag = list_etag(&list);
+    if let Some(r) = crate::teams::not_modified(&headers, &etag) {
+        return Ok(r);
+    }
     let list = app.prepare_list(list).await;
-    Ok(Json(app.sanitize_list_for_user(list, &s.user_id).await))
+    Ok(crate::teams::with_etag(Json(app.sanitize_list_for_user(list, &s.user_id).await), &etag))
 }
 
 #[derive(Deserialize, Default)]
@@ -2485,7 +2822,10 @@ async fn edit_history(St(app): St<State>, Auth(s): Auth, Path(post_id): Path<Str
     if !app.channel_perm(&s, &post.channel_id, perm::EDIT_POST).await?.0 || post.user_id != s.user_id {
         return Err(AppError::forbidden_perm(perm::EDIT_POST));
     }
-    let sql = format!("SELECT {}, 0::bigint AS replycount FROM Posts p WHERE p.OriginalId = $1 ORDER BY p.EditAt DESC", pc("p"));
+    let sql = format!(
+        "SELECT {}, 0::bigint AS replycount FROM Posts p WHERE p.OriginalId = $1 ORDER BY p.EditAt DESC",
+        pc("p")
+    );
     let posts: Vec<WithCount> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&post_id).fetch_all(&app.db).await?;
     if posts.is_empty() {
         // `GetEditHistoryForPost`: a post never edited is a NotFound from the store, answered as app.post.get.app_error.
@@ -2493,7 +2833,9 @@ async fn edit_history(St(app): St<State>, Auth(s): Auth, Path(post_id): Path<Str
     }
     let mut out = vec![];
     for WithCount(p) in posts {
-        out.push(app.prepare_post(&p, Prep { include_deleted: true, retain_content: true, ..Default::default() }).await);
+        out.push(
+            app.prepare_post(&p, Prep { include_deleted: true, retain_content: true, ..Default::default() }).await,
+        );
     }
     Ok(Json(out))
 }
@@ -2523,10 +2865,16 @@ async fn restore_version(
     }
     check_create_post(&app, &s, &post.channel_id).await?;
     if edit_time_expired(&app, &post) {
-        return Err(AppError::bad_request("api.post.update_post.permissions_time_limit.app_error", "Post edit is only allowed for a limited time."));
+        return Err(AppError::bad_request(
+            "api.post.update_post.permissions_time_limit.app_error",
+            "Post edit is only allowed for a limited time.",
+        ));
     }
     let v = Some(v).filter(|v| v.original_id == post_id).ok_or_else(|| {
-        AppError::bad_request("app.post.restore_post_version.not_an_history_item.app_error", "The provided post version is not part of the post's edit history.")
+        AppError::bad_request(
+            "app.post.restore_post_version.not_an_history_item.app_error",
+            "The provided post version is not part of the post's edit history.",
+        )
     })?;
     if v.delete_at == 0 {
         return Err(AppError::bad_request("app.post.restore_post_version.not_valid_post_history_item.app_error", ""));
@@ -2554,7 +2902,9 @@ async fn post_info(St(app): St<State>, Auth(s): Auth, Path(post_id): Path<String
                 .ok_or_else(not_found)?;
         joined_team = s.team_members.iter().any(|m| m.team_id == c.team_id && m.delete_at == 0);
         let can = joined_team
-            || app.user_team_perm(&s.user_id, &t.0, if t.2 { perm::JOIN_PUBLIC_TEAMS } else { perm::JOIN_PRIVATE_TEAMS }).await;
+            || app
+                .user_team_perm(&s.user_id, &t.0, if t.2 { perm::JOIN_PUBLIC_TEAMS } else { perm::JOIN_PRIVATE_TEAMS })
+                .await;
         if !can {
             return Err(not_found());
         }
@@ -2621,7 +2971,8 @@ impl App {
         let comments = user.notify_prop("comments");
         let check_comments = comments == "root" || comments == "any";
         let mut by_thread: HashMap<String, bool> = HashMap::new();
-        let thread = self.get_post_thread(&post.id, &GetPostsOpts { user_id: user.id.clone(), ..Default::default() }).await?;
+        let thread =
+            self.get_post_thread(&post.id, &GetPostsOpts { user_id: user.id.clone(), ..Default::default() }).await?;
         let (mut count, mut count_root, mut urgent) = (0i64, 0i64, 0i64);
         let mut root_mentions: Vec<String> = vec![];
         if crate::notify::is_post_mention(user, post, &kw, &thread.posts, &mut by_thread, check_comments) {
@@ -2633,7 +2984,14 @@ impl App {
         }
         let mut page = 0;
         loop {
-            let o = GetPostsOpts { channel_id: c.id.clone(), post_id: post.id.clone(), page, per_page: 200, user_id: user.id.clone(), ..Default::default() };
+            let o = GetPostsOpts {
+                channel_id: c.id.clone(),
+                post_id: post.id.clone(),
+                page,
+                per_page: 200,
+                user_id: user.id.clone(),
+                ..Default::default()
+            };
             let list = self.get_posts_around(&o, false).await?;
             for id in &list.order {
                 let p = &list.posts[id];
@@ -2651,18 +3009,29 @@ impl App {
             page += 1;
         }
         if self.post_priority_on() {
-            urgent = self.priority_for_posts(&root_mentions).await?.values().filter(|p| p.priority.as_deref() == Some("urgent")).count() as i64;
+            urgent = self
+                .priority_for_posts(&root_mentions)
+                .await?
+                .values()
+                .filter(|p| p.priority.as_deref() == Some("urgent"))
+                .count() as i64;
         }
         Ok((count, count_root, urgent))
     }
 
     /// `GetAllChannelMembersNotifyPropsForChannel` through its cache.
-    pub async fn channel_notify_props(&self, channel_id: &str) -> ApiResult<Arc<HashMap<String, crate::model::StringMap>>> {
+    pub async fn channel_notify_props(
+        &self,
+        channel_id: &str,
+    ) -> ApiResult<Arc<HashMap<String, crate::model::StringMap>>> {
         if let Some(m) = self.caches.members_notify_props.get(channel_id) {
             return Ok(m);
         }
         let rows: Vec<(String, Option<crate::model::StringMap>)> =
-            sqlx::query_as("SELECT UserId, NotifyProps FROM ChannelMembers WHERE ChannelId = $1").bind(channel_id).fetch_all(&self.db).await?;
+            sqlx::query_as("SELECT UserId, NotifyProps FROM ChannelMembers WHERE ChannelId = $1")
+                .bind(channel_id)
+                .fetch_all(&self.db)
+                .await?;
         let m: HashMap<_, _> = rows.into_iter().map(|(u, p)| (u, p.unwrap_or_default())).collect();
         let m = Arc::new(m);
         self.caches.members_notify_props.put(channel_id.to_string(), m.clone());
@@ -2682,8 +3051,16 @@ impl App {
                 let mut m = match self.thread_membership(user_id, &post.root_id).await? {
                     Some(m) => m,
                     None => {
-                        self.maintain_membership(user_id, &post.root_id, crate::threads::MembershipOpts { following: true, update_following: true, ..Default::default() })
-                            .await?
+                        self.maintain_membership(
+                            user_id,
+                            &post.root_id,
+                            crate::threads::MembershipOpts {
+                                following: true,
+                                update_following: true,
+                                ..Default::default()
+                            },
+                        )
+                        .await?
                     }
                 };
                 m.following = true;
@@ -2876,8 +3253,9 @@ async fn posts_around_unread(
     St(app): St<State>,
     Auth(s): Auth,
     Path((user_id, channel_id)): Path<(String, String)>,
+    headers: HeaderMap,
     Query(q): Query<AroundQuery>,
-) -> ApiResult<Json<PostList>> {
+) -> ApiResult<Response> {
     let user_id = s.resolve(&user_id);
     if !is_valid_id(&channel_id) {
         return Err(AppError::invalid_url_param("channel_id"));
@@ -2909,12 +3287,18 @@ async fn posts_around_unread(
         exclude_membership: excludes_membership(&c),
         ..Default::default()
     };
-    let last_viewed: i64 = sqlx::query_scalar("SELECT COALESCE(LastViewedAt, 0) FROM ChannelMembers WHERE ChannelId = $1 AND UserId = $2")
-        .bind(&channel_id)
-        .bind(&user_id)
-        .fetch_optional(&app.db)
-        .await?
-        .ok_or_else(|| AppError::not_found("app.channel.get_member.missing.app_error", "No channel member found for that user ID and channel ID."))?;
+    let last_viewed: i64 =
+        sqlx::query_scalar("SELECT COALESCE(LastViewedAt, 0) FROM ChannelMembers WHERE ChannelId = $1 AND UserId = $2")
+            .bind(&channel_id)
+            .bind(&user_id)
+            .fetch_optional(&app.db)
+            .await?
+            .ok_or_else(|| {
+                AppError::not_found(
+                    "app.channel.get_member.missing.app_error",
+                    "No channel member found for that user ID and channel ID.",
+                )
+            })?;
     // GetPostsForChannelAroundLastUnread: the first unread post, then posts before and after it. A channel never
     // viewed (LastViewedAt 0) has no such post in Go: the handler then answers the latest page, as when all is read.
     let root = if crt { " AND RootId = ''" } else { "" };
@@ -2930,17 +3314,39 @@ async fn posts_around_unread(
         .fetch_optional(&app.db)
         .await?
     };
+    // The latest page, which nothing unread falls back to, carries the channel's ETag.
+    let mut etag = None;
     let mut list = match first {
         None => {
+            let e = app.posts_etag(&c).await;
+            if let Some(r) = crate::teams::not_modified(&headers, &e) {
+                return Ok(r);
+            }
+            etag = Some(e);
             let mut l = app.get_posts(&GetPostsOpts { per_page: before, ..o.clone() }).await?;
             l.next_post_id.clear();
             l
         }
         Some((id, _)) => {
-            let mut l = app.get_post_thread(&id, &GetPostsOpts { skip_fetch_threads: o.skip_fetch_threads, collapsed_threads: crt, collapsed_threads_extended: o.collapsed_threads_extended, user_id: user_id.clone(), ..Default::default() }).await?;
+            let mut l = app
+                .get_post_thread(
+                    &id,
+                    &GetPostsOpts {
+                        skip_fetch_threads: o.skip_fetch_threads,
+                        collapsed_threads: crt,
+                        collapsed_threads_extended: o.collapsed_threads_extended,
+                        user_id: user_id.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await?;
             l.order = vec![id.clone()];
-            let older = app.get_posts_around(&GetPostsOpts { post_id: id.clone(), per_page: before, ..o.clone() }, true).await?;
-            let newer = app.get_posts_around(&GetPostsOpts { post_id: id.clone(), per_page: after - 1, ..o.clone() }, false).await?;
+            let older = app
+                .get_posts_around(&GetPostsOpts { post_id: id.clone(), per_page: before, ..o.clone() }, true)
+                .await?;
+            let newer = app
+                .get_posts_around(&GetPostsOpts { post_id: id.clone(), per_page: after - 1, ..o.clone() }, false)
+                .await?;
             let mut order = newer.order.clone();
             order.push(id);
             order.extend(older.order.clone());
@@ -2960,7 +3366,11 @@ async fn posts_around_unread(
         list.prev_post_id = app.post_id_around(&channel_id, t, true, crt, o.exclude_membership).await;
     }
     let list = app.prepare_list(list).await;
-    Ok(Json(app.sanitize_list_for_user(list, &s.user_id).await))
+    let body = Json(app.sanitize_list_for_user(list, &s.user_id).await);
+    Ok(match etag {
+        Some(e) => crate::teams::with_etag(body, &e),
+        None => body.into_response(),
+    })
 }
 
 #[derive(Deserialize, Default)]
@@ -2992,17 +3402,24 @@ async fn user_typing(
 
 /// `SendTestMessage`: the system bot's message in its DM with the user, notifying even when muted.
 async fn test_notification(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<Value>> {
-    let bot: Option<(String,)> =
-        sqlx::query_as("SELECT u.Id FROM Users u JOIN Bots b ON b.UserId = u.Id WHERE u.Username = 'system-bot' AND u.DeleteAt = 0")
-            .fetch_optional(&app.db)
-            .await?;
+    let bot: Option<(String,)> = sqlx::query_as(
+        "SELECT u.Id FROM Users u JOIN Bots b ON b.UserId = u.Id WHERE u.Username = 'system-bot' AND u.DeleteAt = 0",
+    )
+    .fetch_optional(&app.db)
+    .await?;
     let Some((bot,)) = bot else {
         return Err(AppError::internal("app.notifications.send_test_message.errors.no_bot", "no system bot"));
     };
     let name = channel::direct_name(&s.user_id, &bot);
-    let c: Option<(String,)> = sqlx::query_as("SELECT Id FROM Channels WHERE Name = $1 AND Type = 'D'").bind(&name).fetch_optional(&app.db).await?;
+    let c: Option<(String,)> = sqlx::query_as("SELECT Id FROM Channels WHERE Name = $1 AND Type = 'D'")
+        .bind(&name)
+        .fetch_optional(&app.db)
+        .await?;
     let Some((cid,)) = c else {
-        return Err(AppError::internal("app.notifications.send_test_message.errors.no_channel", "no direct channel with the system bot"));
+        return Err(AppError::internal(
+            "app.notifications.send_test_message.errors.no_channel",
+            "no direct channel with the system bot",
+        ));
     };
     let c = app.channel_or_404(&cid).await?;
     let post = Post {
@@ -3015,4 +3432,44 @@ async fn test_notification(St(app): St<State>, Auth(s): Auth) -> ApiResult<Json<
         .await
         .map_err(|e| AppError::internal("app.notifications.send_test_message.errors.create_post", e.detailed_error))?;
     Ok(ok())
+}
+
+#[cfg(test)]
+mod hashtag_tests {
+    use super::parse_hashtags;
+
+    #[test]
+    fn hashtags() {
+        for (text, want) in [
+            ("#ab #a1 #Ab #тег", "#ab #a1 #Ab #тег"),
+            ("##double (#ab) [#ab] #ab. #ab, #ab!", "#double #ab #ab #ab #ab #ab"),
+            ("#a #12ab #_x # foo#bar", ""),
+            ("#tag #tag #TAG", "#tag #tag #TAG"),
+        ] {
+            assert_eq!(parse_hashtags(text), want, "{text}");
+        }
+        let many: Vec<String> = (0..150).map(|i| format!("#tag{i:03}")).collect();
+        let out = parse_hashtags(&many.join(" "));
+        assert_eq!(out.len(), 991);
+        assert!(out.ends_with("#tag123"));
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::{list_etag, post_etag};
+    use crate::model::{Post, PostList};
+
+    #[test]
+    fn etags() {
+        let v = crate::SERVER_VERSION;
+        let p = |id: &str, t: i64| Post { id: id.into(), update_at: t, ..Default::default() };
+        assert_eq!(post_etag(&p("a", 5)), format!("{v}.a.5"));
+        let mut l = PostList::default();
+        assert_eq!(list_etag(&l), format!("{v}..0.0"));
+        for x in [p("b", 7), p("c", 7), p("a", 3)] {
+            l.add_ordered(x);
+        }
+        assert_eq!(list_etag(&l), format!("{v}.b.c.7"));
+    }
 }

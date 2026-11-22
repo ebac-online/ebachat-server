@@ -154,12 +154,21 @@ mod tests {
     fn other_products_are_neutral() {
         let a = |s| apply_with(s, "Acme").into_owned();
         assert_eq!(a("use the browser or Mattermost Desktop App."), "use the browser or the desktop app.");
-        assert_eq!(a("Download the Mattermost app or use a supported browser"), "Download the app or use a supported browser");
-        assert_eq!(a("Service only available in Mattermost Enterprise edition"), "Service only available in Enterprise Edition");
+        assert_eq!(
+            a("Download the Mattermost app or use a supported browser"),
+            "Download the app or use a supported browser"
+        );
+        assert_eq!(
+            a("Service only available in Mattermost Enterprise edition"),
+            "Service only available in Enterprise Edition"
+        );
         assert_eq!(a("only available in Mattermost Cloud."), "only available in Cloud.");
         assert_eq!(a("Your Mattermost license has expired"), "Your license has expired");
         assert_eq!(a("was removed in Mattermost v12.0."), "was removed in v12.0.");
-        assert_eq!(a("verwende den Browser oder die Mattermost-Desktop-App."), "verwende den Browser oder die Desktop-App.");
+        assert_eq!(
+            a("verwende den Browser oder die Mattermost-Desktop-App."),
+            "verwende den Browser oder die Desktop-App."
+        );
         assert_eq!(a("매터모스트 엔터프라이즈 에디션"), "엔터프라이즈 에디션");
     }
 

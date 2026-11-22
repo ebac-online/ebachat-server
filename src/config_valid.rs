@@ -28,7 +28,10 @@ impl C<'_> {
         self.v(p).as_i64().unwrap_or(0)
     }
     fn list(&self, p: &str) -> Vec<String> {
-        self.v(p).as_array().map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect()).unwrap_or_default()
+        self.v(p)
+            .as_array()
+            .map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -79,7 +82,8 @@ fn email_ok(s: &str) -> bool {
 
 /// `IsValidHTTPURL`.
 fn http_url_ok(s: &str) -> bool {
-    (s.starts_with("http://") || s.starts_with("https://")) && reqwest::Url::parse(s).is_ok_and(|u| u.host_str().is_some_and(|h| !h.is_empty()))
+    (s.starts_with("http://") || s.starts_with("https://"))
+        && reqwest::Url::parse(s).is_ok_and(|u| u.host_str().is_some_and(|h| !h.is_empty()))
 }
 
 /// `url.ParseRequestURI`: an absolute URL or an absolute path.
@@ -127,17 +131,27 @@ pub fn is_valid(cfg: &Value) -> R {
         )
     })?;
     for id in &ids {
-        check(crate::app::is_valid_id(id), || ep("model.config.is_valid.metrics_client_side_user_id.app_error", &[("Id", id)]))?;
+        check(crate::app::is_valid_id(id), || {
+            ep("model.config.is_valid.metrics_client_side_user_id.app_error", &[("Id", id)])
+        })?;
     }
     // ClusterSettings
-    check(port_ok(c.i("ClusterSettings.GossipPort"), false), || e("model.config.is_valid.cluster_gossip_port.app_error"))?;
+    check(port_ok(c.i("ClusterSettings.GossipPort"), false), || {
+        e("model.config.is_valid.cluster_gossip_port.app_error")
+    })?;
     // CacheSettings
     let cache = c.s("CacheSettings.CacheType");
     check(cache == "lru" || cache == "redis", || e("model.config.is_valid.cache_type.app_error"))?;
-    check(!(cache == "redis" && c.s("CacheSettings.RedisAddress").is_empty()), || e("model.config.is_valid.empty_redis_address.app_error"))?;
-    check(!(cache == "redis" && c.i("CacheSettings.RedisDB") < 0), || e("model.config.is_valid.invalid_redis_db.app_error"))?;
+    check(!(cache == "redis" && c.s("CacheSettings.RedisAddress").is_empty()), || {
+        e("model.config.is_valid.empty_redis_address.app_error")
+    })?;
+    check(!(cache == "redis" && c.i("CacheSettings.RedisDB") < 0), || {
+        e("model.config.is_valid.invalid_redis_db.app_error")
+    })?;
     team_settings(c)?;
-    check(c.i("ExperimentalSettings.LinkMetadataTimeoutMilliseconds") > 0, || e("model.config.is_valid.link_metadata_timeout.app_error"))?;
+    check(c.i("ExperimentalSettings.LinkMetadataTimeoutMilliseconds") > 0, || {
+        e("model.config.is_valid.link_metadata_timeout.app_error")
+    })?;
     support_settings(c)?;
     positive(c, "AnnouncementSettings.NoticesFetchFrequency")?;
     sql_settings(c)?;
@@ -147,16 +161,23 @@ pub fn is_valid(cfg: &Value) -> R {
     saml_settings(c)?;
     openid_settings(c)?;
     intune_settings(c)?;
-    for p in ["NativeAppSettings.AppDownloadLink", "NativeAppSettings.AndroidAppDownloadLink", "NativeAppSettings.IosAppDownloadLink"] {
+    for p in [
+        "NativeAppSettings.AppDownloadLink",
+        "NativeAppSettings.AndroidAppDownloadLink",
+        "NativeAppSettings.IosAppDownloadLink",
+    ] {
         let l = c.s(p);
         if !l.is_empty() {
-            let ok = reqwest::Url::parse(l).is_ok_and(|u| !u.scheme().is_empty() && u.host_str().is_some_and(|h| !h.is_empty()));
+            let ok = reqwest::Url::parse(l)
+                .is_ok_and(|u| !u.scheme().is_empty() && u.host_str().is_some_and(|h| !h.is_empty()));
             check(ok, || e("model.config.is_valid.native_app_settings.download_link.app_error"))?;
         }
     }
     if c.b("IntuneSettings.Enable") {
         match c.s("IntuneSettings.AuthService") {
-            "office365" => check(c.b("Office365Settings.Enable"), || e("model.config.is_valid.intune_requires_office365.app_error"))?,
+            "office365" => check(c.b("Office365Settings.Enable"), || {
+                e("model.config.is_valid.intune_requires_office365.app_error")
+            })?,
             "saml" => check(c.b("SamlSettings.Enable"), || e("model.config.is_valid.intune_requires_saml.app_error"))?,
             _ => {}
         }
@@ -172,7 +193,9 @@ pub fn is_valid(cfg: &Value) -> R {
     elasticsearch_settings(c)?;
     data_retention_settings(c)?;
     // LogSettings
-    for (on, level) in [("LogSettings.EnableConsole", "LogSettings.ConsoleLevel"), ("LogSettings.EnableFile", "LogSettings.FileLevel")] {
+    for (on, level) in
+        [("LogSettings.EnableConsole", "LogSettings.ConsoleLevel"), ("LogSettings.EnableFile", "LogSettings.FileLevel")]
+    {
         check(!c.b(on) || log_level_ok(c.s(level)), || {
             ep("model.config.is_valid.log_level.app_error", &[("Setting", level), ("Value", c.s(level))])
         })?;
@@ -195,7 +218,9 @@ pub fn is_valid(cfg: &Value) -> R {
     message_export_settings(c)?;
     let scheme = regex::Regex::new(r"(?i)^\s*[A-Za-z][A-Za-z0-9.+-]*\s*$").expect("regex");
     for s in c.list("DisplaySettings.CustomURLSchemes") {
-        check(scheme.is_match(&s), || ep("model.config.is_valid.display.custom_url_schemes.app_error", &[("Scheme", &s)]))?;
+        check(scheme.is_match(&s), || {
+            ep("model.config.is_valid.display.custom_url_schemes.app_error", &[("Scheme", &s)])
+        })?;
     }
     if c.b("ImageProxySettings.Enable") {
         match c.s("ImageProxySettings.ImageProxyType") {
@@ -205,15 +230,21 @@ pub fn is_valid(cfg: &Value) -> R {
         }
     }
     check(!c.s("ImportSettings.Directory").is_empty(), || e("model.config.is_valid.import.directory.app_error"))?;
-    check(c.i("ImportSettings.RetentionDays") > 0, || e("model.config.is_valid.import.retention_days_too_low.app_error"))?;
+    check(c.i("ImportSettings.RetentionDays") > 0, || {
+        e("model.config.is_valid.import.retention_days_too_low.app_error")
+    })?;
     check(!c.s("ExportSettings.Directory").is_empty(), || e("model.config.is_valid.export.directory.app_error"))?;
-    check(c.i("ExportSettings.RetentionDays") > 0, || e("model.config.is_valid.export.retention_days_too_low.app_error"))?;
+    check(c.i("ExportSettings.RetentionDays") > 0, || {
+        e("model.config.is_valid.export.retention_days_too_low.app_error")
+    })?;
     let domain = regex::Regex::new(
         r"^(([a-zA-Z]{1})|([a-zA-Z]{1}[a-zA-Z]{1})|([a-zA-Z]{1}[0-9]{1})|([0-9]{1}[a-zA-Z]{1})|([a-zA-Z0-9][a-zA-Z0-9-_]{1,61}[a-zA-Z0-9]))\.([a-zA-Z]{2,6}|[a-zA-Z0-9-]{2,30}\.[a-zA-Z]{2,3})$",
     )
     .expect("regex");
     for d in c.list("WranglerSettings.AllowedEmailDomain") {
-        check(domain.is_match(&d) || d == "localhost", || e("model.config.is_valid.move_thread.domain_invalid.app_error"))?;
+        check(domain.is_match(&d) || d == "localhost", || {
+            e("model.config.is_valid.move_thread.domain_invalid.app_error")
+        })?;
     }
     for p in [
         "ConnectedWorkspacesSettings.GlobalUserSyncBatchSize",
@@ -232,20 +263,33 @@ pub fn is_valid(cfg: &Value) -> R {
         ] {
             let n = c.i(&format!("MobileEphemeralModeSettings.{p}"));
             check((0..=max).contains(&n), || {
-                ep(&format!("model.config.is_valid.mobile_ephemeral_mode.{id}.app_error"), &[("Min", "0"), ("Max", &max.to_string())])
+                ep(
+                    &format!("model.config.is_valid.mobile_ephemeral_mode.{id}.app_error"),
+                    &[("Min", "0"), ("Max", &max.to_string())],
+                )
             })?;
         }
     }
-    check(!(c.b("GuestAccountsSettings.EnableGuestMagicLink") && c.b("GuestAccountsSettings.EnforceMultifactorAuthentication")), || {
-        e("model.config.is_valid.guest_accounts.cannot_enforce_multifactor_authentication_when_guest_magic_link_is_enabled.app_error")
+    check(
+        !(c.b("GuestAccountsSettings.EnableGuestMagicLink")
+            && c.b("GuestAccountsSettings.EnforceMultifactorAuthentication")),
+        || {
+            e(
+                "model.config.is_valid.guest_accounts.cannot_enforce_multifactor_authentication_when_guest_magic_link_is_enabled.app_error",
+            )
+        },
+    )?;
+    check(c.i("AccessControlSettings.SyncJobIntervalSeconds") >= 60, || {
+        e("model.config.is_valid.access_control_sync_interval.app_error")
     })?;
-    check(c.i("AccessControlSettings.SyncJobIntervalSeconds") >= 60, || e("model.config.is_valid.access_control_sync_interval.app_error"))?;
     check(c.i("AccessControlSettings.AttributeRefreshIntervalSeconds") >= 0, || {
         e("model.config.is_valid.access_control_attribute_refresh_interval.app_error")
     })?;
     // FeatureFlags.isValid: retired features.
     check(!c.b("FeatureFlags.AppsEnabled"), || e("model.config.is_valid.feature_flags.apps_enabled.app_error"))?;
-    check(!c.b("FeatureFlags.MoveThreadsEnabled"), || e("model.config.is_valid.feature_flags.move_threads_enabled.app_error"))?;
+    check(!c.b("FeatureFlags.MoveThreadsEnabled"), || {
+        e("model.config.is_valid.feature_flags.move_threads_enabled.app_error")
+    })?;
     Ok(())
 }
 
@@ -267,13 +311,21 @@ mod ldap_tests {
 fn team_settings(c: &C) -> R {
     check(c.i("TeamSettings.MaxUsersPerTeam") > 0, || e("model.config.is_valid.max_users.app_error"))?;
     check(c.i("TeamSettings.MaxChannelsPerTeam") > 0, || e("model.config.is_valid.max_channels.app_error"))?;
-    check(c.i("TeamSettings.UserStatusAwayTimeout") > 0, || e("model.config.is_valid.user_status_away_timeout.app_error"))?;
-    check(c.i("TeamSettings.MaxNotificationsPerChannel") > 0, || e("model.config.is_valid.max_notify_per_channel.app_error"))?;
-    check(matches!(c.s("TeamSettings.RestrictDirectMessage"), "any" | "team"), || e("model.config.is_valid.restrict_direct_message.app_error"))?;
+    check(c.i("TeamSettings.UserStatusAwayTimeout") > 0, || {
+        e("model.config.is_valid.user_status_away_timeout.app_error")
+    })?;
+    check(c.i("TeamSettings.MaxNotificationsPerChannel") > 0, || {
+        e("model.config.is_valid.max_notify_per_channel.app_error")
+    })?;
+    check(matches!(c.s("TeamSettings.RestrictDirectMessage"), "any" | "team"), || {
+        e("model.config.is_valid.restrict_direct_message.app_error")
+    })?;
     check(matches!(c.s("TeamSettings.TeammateNameDisplay"), "full_name" | "nickname_full_name" | "username"), || {
         e("model.config.is_valid.teammate_name_display.app_error")
     })?;
-    check(c.s("TeamSettings.SiteName").len() <= 30, || ep("model.config.is_valid.sitename_length.app_error", &[("MaxLength", "30")]))?;
+    check(c.s("TeamSettings.SiteName").len() <= 30, || {
+        ep("model.config.is_valid.sitename_length.app_error", &[("MaxLength", "30")])
+    })?;
     check(matches!(c.s("TeamSettings.LockProfileFieldsForEmailUsers"), "none" | "name_and_username" | "all"), || {
         e("model.config.is_valid.lock_profile_fields.app_error")
     })
@@ -296,7 +348,9 @@ fn support_settings(c: &C) -> R {
         "link" => {
             let l = c.v("SupportSettings.ReportAProblemLink");
             check(!l.is_null(), || e("model.config.is_valid.report_a_problem_link.missing.app_error"))?;
-            check(http_url_ok(c.s("SupportSettings.ReportAProblemLink")), || e("model.config.is_valid.report_a_problem_link.invalid.app_error"))
+            check(http_url_ok(c.s("SupportSettings.ReportAProblemLink")), || {
+                e("model.config.is_valid.report_a_problem_link.invalid.app_error")
+            })
         }
         _ => Ok(()),
     }
@@ -305,21 +359,38 @@ fn support_settings(c: &C) -> R {
 fn sql_settings(c: &C) -> R {
     check(c.s("SqlSettings.DriverName") == "postgres", || e("model.config.is_valid.sql_driver.app_error"))?;
     check(c.i("SqlSettings.MaxIdleConns") > 0, || e("model.config.is_valid.sql_idle.app_error"))?;
-    check(c.i("SqlSettings.ConnMaxLifetimeMilliseconds") >= 0, || e("model.config.is_valid.sql_conn_max_lifetime_milliseconds.app_error"))?;
-    check(c.i("SqlSettings.ConnMaxIdleTimeMilliseconds") >= 0, || e("model.config.is_valid.sql_conn_max_idle_time_milliseconds.app_error"))?;
+    check(c.i("SqlSettings.ConnMaxLifetimeMilliseconds") >= 0, || {
+        e("model.config.is_valid.sql_conn_max_lifetime_milliseconds.app_error")
+    })?;
+    check(c.i("SqlSettings.ConnMaxIdleTimeMilliseconds") >= 0, || {
+        e("model.config.is_valid.sql_conn_max_idle_time_milliseconds.app_error")
+    })?;
     check(c.i("SqlSettings.QueryTimeout") > 0, || e("model.config.is_valid.sql_query_timeout.app_error"))?;
-    check(c.i("SqlSettings.AnalyticsQueryTimeout") > 0, || e("model.config.is_valid.sql_analytics_query_timeout.app_error"))?;
+    check(c.i("SqlSettings.AnalyticsQueryTimeout") > 0, || {
+        e("model.config.is_valid.sql_analytics_query_timeout.app_error")
+    })?;
     check(c.i("SqlSettings.MigrationsStatementTimeoutSeconds") >= 0, || {
         e("model.config.is_valid.sql_migrations_statement_timeout_seconds.app_error")
     })?;
-    check(c.i("SqlSettings.ReplicaMonitorIntervalSeconds") > 0, || e("model.config.is_valid.sql_replica_monitor_interval_seconds.app_error"))?;
+    check(c.i("SqlSettings.ReplicaMonitorIntervalSeconds") > 0, || {
+        e("model.config.is_valid.sql_replica_monitor_interval_seconds.app_error")
+    })?;
     check(!c.s("SqlSettings.DataSource").is_empty(), || e("model.config.is_valid.sql_data_src.app_error"))?;
     check(c.i("SqlSettings.MaxOpenConns") > 0, || e("model.config.is_valid.sql_max_conn.app_error"))
 }
 
 const STORAGE_CLASSES: &[&str] = &[
-    "STANDARD", "REDUCED_REDUNDANCY", "STANDARD_IA", "ONEZONE_IA", "INTELLIGENT_TIERING", "GLACIER", "DEEP_ARCHIVE",
-    "OUTPOSTS", "GLACIER_IR", "SNOW", "EXPRESS_ONEZONE",
+    "STANDARD",
+    "REDUCED_REDUNDANCY",
+    "STANDARD_IA",
+    "ONEZONE_IA",
+    "INTELLIGENT_TIERING",
+    "GLACIER",
+    "DEEP_ARCHIVE",
+    "OUTPOSTS",
+    "GLACIER_IR",
+    "SNOW",
+    "EXPRESS_ONEZONE",
 ];
 
 fn file_settings(c: &C) -> R {
@@ -342,11 +413,15 @@ fn file_settings(c: &C) -> R {
     check(!dir.is_empty(), || e("model.config.is_valid.directory.app_error"))?;
     let trimmed = |k: &str| -> R {
         let v = c.s(&f(k));
-        check(v.trim() == v, || ep("model.config.is_valid.directory_whitespace.app_error", &[("Setting", &f(k)), ("Value", v)]))
+        check(v.trim() == v, || {
+            ep("model.config.is_valid.directory_whitespace.app_error", &[("Setting", &f(k)), ("Value", v)])
+        })
     };
     trimmed("Directory")?;
     let dec = c.i(&f("MaxImageDecoderConcurrency"));
-    check(!(dec < -1 || dec == 0), || ep("model.config.is_valid.image_decoder_concurrency.app_error", &[("Value", &dec.to_string())]))?;
+    check(!(dec < -1 || dec == 0), || {
+        ep("model.config.is_valid.image_decoder_concurrency.app_error", &[("Value", &dec.to_string())])
+    })?;
     check(c.i(&f("AmazonS3RequestTimeoutMilliseconds")) > 0, || {
         ep("model.config.is_valid.amazons3_timeout.app_error", &[("Value", &dec.to_string())])
     })?;
@@ -354,7 +429,11 @@ fn file_settings(c: &C) -> R {
     let account = regex::Regex::new("^[a-z0-9]{3,24}$").expect("regex");
     for (prefix, timeout_id, mode_id) in [
         ("", "model.config.is_valid.azure_timeout.app_error", "model.config.is_valid.azure_auth_mode.app_error"),
-        ("Export", "model.config.is_valid.export_azure_timeout.app_error", "model.config.is_valid.export_azure_auth_mode.app_error"),
+        (
+            "Export",
+            "model.config.is_valid.export_azure_timeout.app_error",
+            "model.config.is_valid.export_azure_auth_mode.app_error",
+        ),
     ] {
         if prefix == "Export" {
             let class = c.s(&f("ExportAmazonS3StorageClass"));
@@ -378,7 +457,10 @@ fn file_settings(c: &C) -> R {
         let driver = c.s(&f(&format!("{prefix}DriverName")));
         let account_key = f(&format!("{prefix}AzureStorageAccount"));
         check(!(driver == "azure" && cloud != "custom" && !account.is_match(c.s(&account_key))), || {
-            ep("model.config.is_valid.azure_storage_account.app_error", &[("Setting", &account_key), ("Value", c.s(&account_key))])
+            ep(
+                "model.config.is_valid.azure_storage_account.app_error",
+                &[("Setting", &account_key), ("Value", c.s(&account_key))],
+            )
         })?;
         if prefix.is_empty() {
             let class = c.s(&f("AmazonS3StorageClass"));
@@ -390,7 +472,10 @@ fn file_settings(c: &C) -> R {
         trimmed(&format!("{prefix}AzurePathPrefix"))?;
         let azure_prefix_key = f(&format!("{prefix}AzurePathPrefix"));
         check(!c.s(&azure_prefix_key).contains(".."), || {
-            ep("model.config.is_valid.directory_traversal.app_error", &[("Setting", &azure_prefix_key), ("Value", c.s(&azure_prefix_key))])
+            ep(
+                "model.config.is_valid.directory_traversal.app_error",
+                &[("Setting", &azure_prefix_key), ("Value", c.s(&azure_prefix_key))],
+            )
         })?;
     }
     trimmed("ExportDirectory")
@@ -409,16 +494,24 @@ fn email_settings(c: &C) -> R {
     check(port_str_ok(c.s("EmailSettings.SMTPPort"), false), || {
         ep("model.config.is_valid.port.app_error", &[("Setting", "EmailSettings.SMTPPort")])
     })?;
-    check(c.i("EmailSettings.EmailBatchingBufferSize") > 0, || e("model.config.is_valid.email_batching_buffer_size.app_error"))?;
-    check(c.i("EmailSettings.EmailBatchingInterval") >= 30, || e("model.config.is_valid.email_batching_interval.app_error"))?;
-    check(c.i("EmailSettings.PushNotificationBuffer") > 0, || e("model.config.is_valid.email_push_notification_buffer.app_error"))?;
+    check(c.i("EmailSettings.EmailBatchingBufferSize") > 0, || {
+        e("model.config.is_valid.email_batching_buffer_size.app_error")
+    })?;
+    check(c.i("EmailSettings.EmailBatchingInterval") >= 30, || {
+        e("model.config.is_valid.email_batching_interval.app_error")
+    })?;
+    check(c.i("EmailSettings.PushNotificationBuffer") > 0, || {
+        e("model.config.is_valid.email_push_notification_buffer.app_error")
+    })?;
     check(matches!(c.s("EmailSettings.EmailNotificationContentsType"), "full" | "generic"), || {
         e("model.config.is_valid.email_notification_contents_type.app_error")
     })
 }
 
 fn ldap_settings(c: &C) -> R {
-    check(matches!(c.s("LdapSettings.ConnectionSecurity"), "" | "TLS" | "STARTTLS"), || e("model.config.is_valid.ldap_security.app_error"))?;
+    check(matches!(c.s("LdapSettings.ConnectionSecurity"), "" | "TLS" | "STARTTLS"), || {
+        e("model.config.is_valid.ldap_security.app_error")
+    })?;
     let on = c.b("LdapSettings.Enable");
     if on || c.b("LdapSettings.EnableSync") {
         port(c, "LdapSettings.LdapPort", false)?;
@@ -428,7 +521,9 @@ fn ldap_settings(c: &C) -> R {
     check(c.i("LdapSettings.MaxPageSize") >= 0, || e("model.config.is_valid.ldap_max_page_size.app_error"))?;
     if on {
         check(!c.s("LdapSettings.LdapServer").is_empty(), || e("model.config.is_valid.ldap_server"))?;
-        check(c.i("LdapSettings.MaximumLoginAttempts") > 0, || e("model.config.is_valid.ldap_max_login_attempts.app_error"))?;
+        check(c.i("LdapSettings.MaximumLoginAttempts") > 0, || {
+            e("model.config.is_valid.ldap_max_login_attempts.app_error")
+        })?;
         for (k, id) in [
             ("BaseDN", "model.config.is_valid.ldap_basedn"),
             ("EmailAttribute", "model.config.is_valid.ldap_email"),
@@ -559,7 +654,9 @@ fn ldap_compile(f: &str, pos: usize) -> Option<usize> {
 fn openid_settings(c: &C) -> R {
     let scopes = c.s("OpenIdSettings.AdditionalScopes");
     let ok = scopes.len() <= 1024
-        && scopes.split(' ').all(|s| s.chars().all(|ch| ch == '\x21' || ('\x23'..='\x5B').contains(&ch) || ('\x5D'..='\x7E').contains(&ch)));
+        && scopes.split(' ').all(|s| {
+            s.chars().all(|ch| ch == '\x21' || ('\x23'..='\x5B').contains(&ch) || ('\x5D'..='\x7E').contains(&ch))
+        });
     check(ok, || ep("model.config.is_valid.sso_additional_scopes.app_error", &[("MaxLength", "1024")]))
 }
 
@@ -589,9 +686,11 @@ fn content_flagging_settings(c: &C) -> R {
 
 /// `DeliveryTrackingSettings.IsValid` and `AIRecapSettings.IsValid`.
 fn delivery_and_recap_settings(c: &C) -> R {
-    check(c.v("DeliveryTrackingSettings.Enable").is_boolean() && c.v("DeliveryTrackingSettings.EnableForAllChannels").is_boolean(), || {
-        e("model.delivery_tracking.is_valid.missing_toggle.app_error")
-    })?;
+    check(
+        c.v("DeliveryTrackingSettings.Enable").is_boolean()
+            && c.v("DeliveryTrackingSettings.EnableForAllChannels").is_boolean(),
+        || e("model.delivery_tracking.is_valid.missing_toggle.app_error"),
+    )?;
     if c.v("AIRecapSettings.DefaultLimits").is_object() {
         for (k, id) in [
             ("MaxRecapsPerDay", "max_recaps_per_day"),
@@ -602,7 +701,9 @@ fn delivery_and_recap_settings(c: &C) -> R {
             ("MaxPostsPerDay", "max_posts_per_day"),
         ] {
             let v = c.v(&format!("AIRecapSettings.DefaultLimits.{k}"));
-            check(v.as_i64().is_none_or(|n| n == -1 || n >= 1), || e(&format!("model.config.is_valid.ai_recap.{id}.app_error")))?;
+            check(v.as_i64().is_none_or(|n| n == -1 || n >= 1), || {
+                e(&format!("model.config.is_valid.ai_recap.{id}.app_error"))
+            })?;
         }
         let v = c.v("AIRecapSettings.DefaultLimits.CooldownMinutes");
         check(v.as_i64().is_none_or(|n| n >= 0), || e("model.config.is_valid.ai_recap.cooldown_minutes.app_error"))?;
@@ -620,10 +721,14 @@ fn saml_settings(c: &C) -> R {
     check(!s("IdpCertificateFile").is_empty(), || e("model.config.is_valid.saml_idp_cert.app_error"))?;
     check(!s("EmailAttribute").is_empty(), || e("model.config.is_valid.saml_email_attribute.app_error"))?;
     check(!s("UsernameAttribute").is_empty(), || e("model.config.is_valid.saml_username_attribute.app_error"))?;
-    check(!s("ServiceProviderIdentifier").is_empty(), || e("model.config.is_valid.saml_spidentifier_attribute.app_error"))?;
+    check(!s("ServiceProviderIdentifier").is_empty(), || {
+        e("model.config.is_valid.saml_spidentifier_attribute.app_error")
+    })?;
     if c.b("SamlSettings.Verify") {
         let u = s("AssertionConsumerServiceURL");
-        check(!u.is_empty() && http_url_ok(u), || e("model.config.is_valid.saml_assertion_consumer_service_url.app_error"))?;
+        check(!u.is_empty() && http_url_ok(u), || {
+            e("model.config.is_valid.saml_assertion_consumer_service_url.app_error")
+        })?;
     }
     if c.b("SamlSettings.Encrypt") {
         check(!s("PrivateKeyFile").is_empty(), || e("model.config.is_valid.saml_private_key.app_error"))?;
@@ -632,8 +737,13 @@ fn saml_settings(c: &C) -> R {
     check(matches!(s("SignatureAlgorithm"), "RSAwithSHA1" | "RSAwithSHA256" | "RSAwithSHA512"), || {
         e("model.config.is_valid.saml_signature_algorithm.app_error")
     })?;
-    check(matches!(s("CanonicalAlgorithm"), "Canonical1.0" | "Canonical1.1"), || e("model.config.is_valid.saml_canonical_algorithm.app_error"))?;
-    for (k, id) in [("GuestAttribute", "model.config.is_valid.saml_guest_attribute.app_error"), ("AdminAttribute", "model.config.is_valid.saml_admin_attribute.app_error")] {
+    check(matches!(s("CanonicalAlgorithm"), "Canonical1.0" | "Canonical1.1"), || {
+        e("model.config.is_valid.saml_canonical_algorithm.app_error")
+    })?;
+    for (k, id) in [
+        ("GuestAttribute", "model.config.is_valid.saml_guest_attribute.app_error"),
+        ("AdminAttribute", "model.config.is_valid.saml_admin_attribute.app_error"),
+    ] {
         let v = s(k);
         check(v.is_empty() || v.split('=').count() == 2, || e(id))?;
     }
@@ -644,7 +754,8 @@ fn intune_settings(c: &C) -> R {
     if !c.b("IntuneSettings.Enable") {
         return Ok(());
     }
-    let uuid = regex::Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$").expect("regex");
+    let uuid = regex::Regex::new(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+        .expect("regex");
     let tenant = c.s("IntuneSettings.TenantId");
     check(!tenant.is_empty(), || e("model.config.is_valid.intune_tenant_id.app_error"))?;
     check(uuid.is_match(tenant), || e("model.config.is_valid.intune_tenant_id_format.app_error"))?;
@@ -661,7 +772,10 @@ fn domain_ok(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 255
         && s.trim_end_matches('.').split('.').all(|l| {
-            !l.is_empty() && l.len() <= 63 && !l.starts_with('-') && !l.ends_with('-')
+            !l.is_empty()
+                && l.len() <= 63
+                && !l.starts_with('-')
+                && !l.ends_with('-')
                 && l.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
         })
 }
@@ -711,10 +825,14 @@ fn service_settings(c: &C) -> R {
     check(i("BurnOnReadSchedulerFrequencySeconds") > 0, || e(&sid("burn_on_read_scheduler_frequency_seconds")))?;
     check(i("ReadTimeout") > 0, || e("model.config.is_valid.read_timeout.app_error"))?;
     check(i("WriteTimeout") > 0, || e("model.config.is_valid.write_timeout.app_error"))?;
-    check(i("TimeBetweenUserTypingUpdatesMilliseconds") >= 1000, || e("model.config.is_valid.time_between_user_typing.app_error"))?;
+    check(i("TimeBetweenUserTypingUpdatesMilliseconds") >= 1000, || {
+        e("model.config.is_valid.time_between_user_typing.app_error")
+    })?;
     check(i("MaximumLoginAttempts") > 0, || e("model.config.is_valid.login_attempts.app_error"))?;
     check(s("SiteURL").is_empty() || request_uri_ok(s("SiteURL")), || e("model.config.is_valid.site_url.app_error"))?;
-    check(s("WebsocketURL").is_empty() || request_uri_ok(s("WebsocketURL")), || e("model.config.is_valid.websocket_url.app_error"))?;
+    check(s("WebsocketURL").is_empty() || request_uri_ok(s("WebsocketURL")), || {
+        e("model.config.is_valid.websocket_url.app_error")
+    })?;
     let v = s("MinimumDesktopAppVersion");
     let semver_ok = v.split('.').count() == 3 && v.split(['.', '-', '+']).take(3).all(|p| p.parse::<u64>().is_ok());
     check(v.is_empty() || semver_ok, || e("model.config.is_valid.minimum_desktop_app_version.app_error"))?;
@@ -724,21 +842,34 @@ fn service_settings(c: &C) -> R {
     };
     let host_ok = host.is_empty() || host.parse::<std::net::IpAddr>().is_ok() || domain_ok(host);
     check(host_ok && port_str_ok(port, true), || e("model.config.is_valid.listen_address.app_error"))?;
-    check(i("OutgoingIntegrationRequestsTimeout") > 0, || e("model.config.is_valid.outgoing_integrations_request_timeout.app_error"))?;
+    check(i("OutgoingIntegrationRequestsTimeout") > 0, || {
+        e("model.config.is_valid.outgoing_integrations_request_timeout.app_error")
+    })?;
     check(matches!(s("ExperimentalGroupUnreadChannels"), "disabled" | "default_on" | "default_off"), || {
         e("model.config.is_valid.group_unread_channels.app_error")
     })?;
     let crt = s("CollapsedThreads");
-    check(crt == "disabled" || c.b("ServiceSettings.ThreadAutoFollow"), || e("model.config.is_valid.collapsed_threads.autofollow.app_error"))?;
-    check(matches!(crt, "disabled" | "default_on" | "always_on" | "default_off"), || e("model.config.is_valid.collapsed_threads.app_error"))?;
-    check(i("PersistentNotificationIntervalMinutes") >= 2, || e("model.config.is_valid.persistent_notifications_interval.app_error"))?;
-    check(i("PersistentNotificationMaxCount") > 0, || e("model.config.is_valid.persistent_notifications_count.app_error"))?;
-    check(i("PersistentNotificationMaxRecipients") > 0, || e("model.config.is_valid.persistent_notifications_recipients.app_error"))?;
+    check(crt == "disabled" || c.b("ServiceSettings.ThreadAutoFollow"), || {
+        e("model.config.is_valid.collapsed_threads.autofollow.app_error")
+    })?;
+    check(matches!(crt, "disabled" | "default_on" | "always_on" | "default_off"), || {
+        e("model.config.is_valid.collapsed_threads.app_error")
+    })?;
+    check(i("PersistentNotificationIntervalMinutes") >= 2, || {
+        e("model.config.is_valid.persistent_notifications_interval.app_error")
+    })?;
+    check(i("PersistentNotificationMaxCount") > 0, || {
+        e("model.config.is_valid.persistent_notifications_count.app_error")
+    })?;
+    check(i("PersistentNotificationMaxRecipients") > 0, || {
+        e("model.config.is_valid.persistent_notifications_recipients.app_error")
+    })?;
     for p in c.list("ServiceSettings.DCRRedirectURIAllowlist") {
         check(!p.trim().is_empty(), || e("model.config.is_valid.dcr_redirect_uri_allowlist.app_error"))?;
     }
     if c.b("ServiceSettings.EnableLocalMode") {
-        let parent = std::path::Path::new(s("LocalModeSocketLocation")).parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let parent =
+            std::path::Path::new(s("LocalModeSocketLocation")).parent().map(|p| p.to_path_buf()).unwrap_or_default();
         let parent = if parent.as_os_str().is_empty() { std::path::PathBuf::from(".") } else { parent };
         check(parent.exists(), || e("model.config.is_valid.local_mode_socket.app_error"))?;
     }
@@ -755,13 +886,31 @@ fn elasticsearch_settings(c: &C) -> R {
     let id = |k: &str| format!("model.config.is_valid.elastic_search.{k}.app_error");
     check(!(b("EnableIndexing") && s("ConnectionURL").is_empty()), || e(&id("connection_url")))?;
     check(!(b("EnableSearching") && !b("EnableIndexing")), || {
-        ep(&id("enable_searching"), &[("Searching", "ElasticsearchSettings.EnableSearching"), ("EnableIndexing", "ElasticsearchSettings.EnableIndexing")])
+        ep(
+            &id("enable_searching"),
+            &[
+                ("Searching", "ElasticsearchSettings.EnableSearching"),
+                ("EnableIndexing", "ElasticsearchSettings.EnableIndexing"),
+            ],
+        )
     })?;
     check(!(b("EnableCJKAnalyzers") && !b("EnableSearching")), || {
-        ep(&id("enable_cjk_analyzers"), &[("EnableCJKAnalyzers", "ElasticsearchSettings.EnableCJKAnalyzers"), ("Searching", "ElasticsearchSettings.EnableSearching")])
+        ep(
+            &id("enable_cjk_analyzers"),
+            &[
+                ("EnableCJKAnalyzers", "ElasticsearchSettings.EnableCJKAnalyzers"),
+                ("Searching", "ElasticsearchSettings.EnableSearching"),
+            ],
+        )
     })?;
     check(!(b("EnableAutocomplete") && !b("EnableIndexing")), || {
-        ep(&id("enable_autocomplete"), &[("Autocomplete", "ElasticsearchSettings.EnableAutocomplete"), ("EnableIndexing", "ElasticsearchSettings.EnableIndexing")])
+        ep(
+            &id("enable_autocomplete"),
+            &[
+                ("Autocomplete", "ElasticsearchSettings.EnableAutocomplete"),
+                ("EnableIndexing", "ElasticsearchSettings.EnableIndexing"),
+            ],
+        )
     })?;
     check(i("AggregatePostsAfterDays") >= 1, || e(&id("aggregate_posts_after_days")))?;
     for k in ["PostIndexShards", "ChannelIndexShards", "UserIndexShards"] {
@@ -786,7 +935,8 @@ fn elasticsearch_settings(c: &C) -> R {
 fn data_retention_settings(c: &C) -> R {
     let i = |k: &str| c.v(&format!("DataRetentionSettings.{k}")).as_i64();
     let id = |k: &str| format!("model.config.is_valid.data_retention.{k}.app_error");
-    let (md, mh, fd, fh) = (i("MessageRetentionDays"), i("MessageRetentionHours"), i("FileRetentionDays"), i("FileRetentionHours"));
+    let (md, mh, fd, fh) =
+        (i("MessageRetentionDays"), i("MessageRetentionHours"), i("FileRetentionDays"), i("FileRetentionHours"));
     check(md.is_some_and(|n| n >= 0), || e(&id("message_retention_days_too_low")))?;
     check(mh.is_some_and(|n| n >= 0), || e(&id("message_retention_hours_too_low")))?;
     check(fd.is_some_and(|n| n >= 0), || e(&id("file_retention_days_too_low")))?;
@@ -809,8 +959,12 @@ fn auto_translation_settings(c: &C) -> R {
     let id = |k: &str| format!("model.config.is_valid.autotranslation.{k}.app_error");
     match c.s("AutoTranslationSettings.Provider") {
         "" => return Err(e(&id("provider"))),
-        "libretranslate" => check(http_url_ok(c.s("AutoTranslationSettings.LibreTranslate.URL")), || e(&id("libretranslate.url")))?,
-        "agents" => check(!c.s("AutoTranslationSettings.Agents.LLMServiceID").is_empty(), || e(&id("agents.llm_service_id")))?,
+        "libretranslate" => {
+            check(http_url_ok(c.s("AutoTranslationSettings.LibreTranslate.URL")), || e(&id("libretranslate.url")))?
+        }
+        "agents" => {
+            check(!c.s("AutoTranslationSettings.Agents.LLMServiceID").is_empty(), || e(&id("agents.llm_service_id")))?
+        }
         _ => return Err(e(&id("provider.unsupported"))),
     }
     let t = c.v("AutoTranslationSettings.TimeoutMs");
@@ -836,7 +990,9 @@ fn message_export_settings(c: &C) -> R {
         let customer = g("CustomerType");
         check(matches!(customer, "A9" | "A10" | "CUSTOM"), || e(&id("global_relay.customer_type")))?;
         if customer == "CUSTOM" {
-            check(!g("CustomSMTPServerName").is_empty() && !g("CustomSMTPPort").is_empty(), || e(&id("global_relay.customer_type_custom")))?;
+            check(!g("CustomSMTPServerName").is_empty() && !g("CustomSMTPPort").is_empty(), || {
+                e(&id("global_relay.customer_type_custom"))
+            })?;
             check(port_str_ok(g("CustomSMTPPort"), false), || e(&id("global_relay.custom_smtp_port")))?;
         }
         check(email_ok(&g("EmailAddress").to_lowercase()), || e(&id("global_relay.email_address")))?;

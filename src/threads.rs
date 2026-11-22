@@ -10,8 +10,8 @@
 
 use std::collections::HashMap;
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{HeaderValue, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -35,10 +35,7 @@ pub fn routes() -> Router<State> {
         .route("/api/v4/users/{user_id}/teams/{team_id}/threads", get(get_threads))
         .route("/api/v4/users/{user_id}/teams/{team_id}/threads/read", put(read_all))
         .route("/api/v4/users/{user_id}/teams/{team_id}/threads/{thread_id}", get(get_thread))
-        .route(
-            "/api/v4/users/{user_id}/teams/{team_id}/threads/{thread_id}/following",
-            put(follow).delete(unfollow),
-        )
+        .route("/api/v4/users/{user_id}/teams/{team_id}/threads/{thread_id}/following", put(follow).delete(unfollow))
         .route("/api/v4/users/{user_id}/teams/{team_id}/threads/{thread_id}/read/{timestamp}", put(read_thread))
         .route("/api/v4/users/{user_id}/teams/{team_id}/threads/{thread_id}/set_unread/{post_id}", post(set_unread))
 }
@@ -123,11 +120,14 @@ impl<'r> sqlx::FromRow<'r, PgRow> for Joined {
 impl App {
     /// `GetMembershipForUser`.
     pub async fn thread_membership(&self, user_id: &str, post_id: &str) -> ApiResult<Option<ThreadMembership>> {
-        Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE PostId = $1 AND UserId = $2", ThreadMembership::SELECT)))
-            .bind(post_id)
-            .bind(user_id)
-            .fetch_optional(&self.db)
-            .await?)
+        Ok(sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} WHERE PostId = $1 AND UserId = $2",
+            ThreadMembership::SELECT
+        )))
+        .bind(post_id)
+        .bind(user_id)
+        .fetch_optional(&self.db)
+        .await?)
     }
 
     /// `UpdateMembership`.
@@ -148,15 +148,22 @@ impl App {
     }
 
     /// `MaintainMembership`.
-    pub async fn maintain_membership(&self, user_id: &str, post_id: &str, o: MembershipOpts) -> ApiResult<ThreadMembership> {
+    pub async fn maintain_membership(
+        &self,
+        user_id: &str,
+        post_id: &str,
+        o: MembershipOpts,
+    ) -> ApiResult<ThreadMembership> {
         let mut tx = self.db.begin().await?;
         let now = now_ms();
-        let found: Option<ThreadMembership> =
-            sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE PostId = $1 AND UserId = $2 FOR UPDATE", ThreadMembership::SELECT)))
-                .bind(post_id)
-                .bind(user_id)
-                .fetch_optional(&mut *tx)
-                .await?;
+        let found: Option<ThreadMembership> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "{} WHERE PostId = $1 AND UserId = $2 FOR UPDATE",
+            ThreadMembership::SELECT
+        )))
+        .bind(post_id)
+        .bind(user_id)
+        .fetch_optional(&mut *tx)
+        .await?;
         let m = match found {
             Some(mut m) => {
                 let following_changes = o.update_following && m.following != o.following;
@@ -382,7 +389,8 @@ impl App {
     pub async fn count_thread_mentions(&self, user: &User, root: &Post, _team_id: &str, since: i64) -> ApiResult<i64> {
         let c = self.channel_or_404(&root.channel_id).await?;
         let sql = format!("{} WHERE RootId = $1 AND DeleteAt = 0 AND CreateAt >= $2", Post::SELECT);
-        let posts: Vec<Post> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&root.id).bind(since).fetch_all(&self.db).await?;
+        let posts: Vec<Post> =
+            sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&root.id).bind(since).fetch_all(&self.db).await?;
         if c.is_group_or_direct() {
             let other = c.other_user(&user.id).unwrap_or_default();
             return Ok(posts.iter().filter(|p| p.user_id == other).count() as i64);
@@ -396,10 +404,20 @@ impl App {
     }
 
     /// `UpdateThreadReadForUser`: read up to `timestamp`; `thread_read_changed` sent.
-    pub async fn update_thread_read(&self, session_id: &str, user_id: &str, team_id: &str, thread_id: &str, timestamp: i64) -> ApiResult<ThreadResponse> {
+    pub async fn update_thread_read(
+        &self,
+        session_id: &str,
+        user_id: &str,
+        team_id: &str,
+        thread_id: &str,
+        timestamp: i64,
+    ) -> ApiResult<ThreadResponse> {
         let user = self.user(user_id).await?.ok_or_else(crate::users::missing_account)?;
         let mut m = self.thread_membership(user_id, thread_id).await?.ok_or_else(|| {
-            AppError::not_found("app.user.get_thread_membership_for_user.not_found", "Unable to get the user thread membership.")
+            AppError::not_found(
+                "app.user.get_thread_membership_for_user.not_found",
+                "Unable to get the user thread membership.",
+            )
         })?;
         let prev_mentions = m.unread_mentions;
         let prev_replies: i64 =
@@ -420,7 +438,10 @@ impl App {
             .execute(&self.db)
             .await?;
         let t = self.thread_for_user(&m, false).await?.ok_or_else(|| {
-            AppError::not_found("app.user.get_threads_for_user.not_found", "User thread does not exist or is not followed")
+            AppError::not_found(
+                "app.user.get_threads_for_user.not_found",
+                "User thread does not exist or is not followed",
+            )
         })?;
         if t.unread_replies == 0 && self.is_crt_enabled(user_id).await {
             crate::push::clear(self, session_id, user_id, &root.channel_id, thread_id).await;
@@ -436,7 +457,13 @@ impl App {
     }
 
     /// `UpdateThreadFollowForUser`.
-    pub async fn update_thread_follow(&self, user_id: &str, team_id: &str, thread_id: &str, state: bool) -> ApiResult<()> {
+    pub async fn update_thread_follow(
+        &self,
+        user_id: &str,
+        team_id: &str,
+        thread_id: &str,
+        state: bool,
+    ) -> ApiResult<()> {
         self.maintain_membership(
             user_id,
             thread_id,
@@ -525,7 +552,8 @@ async fn get_threads(
     app.require_user(&s, &user_id).await?;
     app.require_team(&s, &team_id, perm::VIEW_TEAM).await?;
     let (_, per_page) = page_params(None, q.per_page.as_deref());
-    let mut o = ThreadsOpts { page_size: per_page, before: q.before.clone(), after: q.after.clone(), ..Default::default() };
+    let mut o =
+        ThreadsOpts { page_size: per_page, before: q.before.clone(), after: q.after.clone(), ..Default::default() };
     if !q.since.is_empty() {
         o.since = q.since.parse::<u64>().map_err(|_| AppError::invalid_param("since"))? as i64;
     }
@@ -533,15 +561,24 @@ async fn get_threads(
     o.threads_only = b(&q.threads_only);
     o.exclude_direct = b(&q.exclude_direct);
     if !o.before.is_empty() && !o.after.is_empty() {
-        return Err(AppError::bad_request("api.getThreadsForUser.bad_params", "Before and After parameters to getThreadsForUser are mutually exclusive"));
+        return Err(AppError::bad_request(
+            "api.getThreadsForUser.bad_params",
+            "Before and After parameters to getThreadsForUser are mutually exclusive",
+        ));
     }
     if o.totals_only && o.threads_only {
-        return Err(AppError::bad_request("api.getThreadsForUser.bad_only_params", "OnlyThreads and OnlyTotals parameters to getThreadsForUser are mutually exclusive"));
+        return Err(AppError::bad_request(
+            "api.getThreadsForUser.bad_only_params",
+            "OnlyThreads and OnlyTotals parameters to getThreadsForUser are mutually exclusive",
+        ));
     }
     o.deleted = b(&q.deleted);
     o.unread = b(&q.unread);
     o.extended = b(&q.extended);
-    let t = app.threads_for_user(&user_id, &team_id, &o).await.map_err(|e| AppError::internal("app.user.get_threads_for_user.app_error", e.detailed_error))?;
+    let t = app
+        .threads_for_user(&user_id, &team_id, &o)
+        .await
+        .map_err(|e| AppError::internal("app.user.get_threads_for_user.app_error", e.detailed_error))?;
     Ok(no_store(t))
 }
 
@@ -560,7 +597,10 @@ async fn get_thread(
         return Err(AppError::forbidden_perm(perm::READ_CHANNEL_CONTENT));
     }
     let m = app.thread_membership(&user_id, &thread_id).await?.ok_or_else(|| {
-        AppError::not_found("app.user.get_thread_membership_for_user.not_found", "Unable to get the user thread membership.")
+        AppError::not_found(
+            "app.user.get_thread_membership_for_user.not_found",
+            "Unable to get the user thread membership.",
+        )
     })?;
     let t = app.thread_for_user(&m, b(&q.extended)).await?.ok_or_else(|| {
         AppError::not_found("app.user.get_threads_for_user.not_found", "User thread does not exist or is not followed")
@@ -588,11 +628,22 @@ async fn read_all(
     .execute(&app.db)
     .await
     .map_err(|e| AppError::internal("app.user.update_threads_read_for_user.app_error", e.to_string()))?;
-    app.hub.publish("thread_read_changed", json!({}), Broadcast { team_id: team_id.clone(), user_id: user_id.clone(), ..Default::default() });
+    app.hub.publish(
+        "thread_read_changed",
+        json!({}),
+        Broadcast { team_id: team_id.clone(), user_id: user_id.clone(), ..Default::default() },
+    );
     Ok(ok())
 }
 
-async fn follow_change(app: &State, s: &crate::model::Session, user_id: &str, team_id: &str, thread_id: &str, on: bool) -> ApiResult<Json<Value>> {
+async fn follow_change(
+    app: &State,
+    s: &crate::model::Session,
+    user_id: &str,
+    team_id: &str,
+    thread_id: &str,
+    on: bool,
+) -> ApiResult<Json<Value>> {
     let user_id = check_ids(s, user_id, team_id).await?;
     if !is_valid_id(thread_id) {
         return Err(AppError::invalid_url_param("thread_id"));
@@ -665,7 +716,10 @@ async fn set_unread(
     // UpdateThreadReadForUserByPost
     let post = app.single_post(&post_id, false).await?;
     if post.root_id != thread_id && post_id != thread_id {
-        return Err(AppError::bad_request("app.user.update_thread_read_for_user_by_post.app_error", "Unable to update thread read state."));
+        return Err(AppError::bad_request(
+            "app.user.update_thread_read_for_user_by_post.app_error",
+            "Unable to update thread read state.",
+        ));
     }
     Ok(Json(app.update_thread_read(&s.id, &user_id, &team_id, &thread_id, post.create_at - 1).await?))
 }

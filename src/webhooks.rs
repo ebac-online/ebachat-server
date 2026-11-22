@@ -7,8 +7,8 @@
 
 use std::sync::{Arc, OnceLock};
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -109,7 +109,8 @@ impl App {
             return Ok(Some(h));
         }
         let sql = format!("{} WHERE Id = $1 AND DeleteAt = 0", IncomingWebhook::SELECT);
-        let h: Option<IncomingWebhook> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.db).await?;
+        let h: Option<IncomingWebhook> =
+            sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(id).fetch_optional(&self.db).await?;
         Ok(h.map(|h| {
             let h = Arc::new(h);
             self.caches.webhook.put(id.to_string(), h.clone());
@@ -157,7 +158,8 @@ pub struct HookRequest {
 fn escape_control_chars(b: &[u8]) -> Vec<u8> {
     static RE: OnceLock<regex::bytes::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::bytes::Regex::new(r#"(?s)"(text|fallback|pretext|author_name|title|value)"\s*:\s*"(\\"|[^"])*""#).unwrap()
+        regex::bytes::Regex::new(r#"(?s)"(text|fallback|pretext|author_name|title|value)"\s*:\s*"(\\"|[^"])*""#)
+            .unwrap()
     });
     re.replace_all(b, |c: &regex::bytes::Captures| {
         let m = c[0].to_vec();
@@ -257,16 +259,29 @@ async fn handle(app: &State, id: &str, headers: &HeaderMap, req: axum::extract::
     let form_err = |id_: &str, e: String| {
         AppError::bad_request(id_, "").with_params(&[("hook_id", id), ("media_type", &media)]).detail(e)
     };
-    let body = axum::body::to_bytes(req.into_body(), 64 << 20)
-        .await
-        .map_err(|e| form_err("web.incoming_webhook.parse_form.app_error", e.to_string()))?;
+    // ServiceSettings.MaximumPayloadSizeBytes plus 512 bytes: a runaway payload is refused, not split into a
+    // flood of posts. A form too large is 413, a JSON body that cannot be read whole a decode error.
+    let max = usize::try_from(app.cfg.i64("ServiceSettings.MaximumPayloadSizeBytes")).unwrap_or(0).saturating_add(512);
+    let body = axum::body::to_bytes(req.into_body(), max).await.map_err(|e| {
+        if media == "application/x-www-form-urlencoded" || media == "multipart/form-data" {
+            AppError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "api.context.request_body_too_large.app_error",
+                "Unable to process request. Request body too large.",
+            )
+            .detail("Use the setting `MaximumPayloadSizeBytes` in the config to configure allowed payload limit.")
+        } else {
+            form_err("web.incoming_webhook.decode.app_error", e.to_string())
+        }
+    })?;
     let r = if media == "application/x-www-form-urlencoded" {
         let payload = form_value(&body, "payload").unwrap_or_default();
         decode_request(payload.as_bytes()).map_err(|e| AppError { status_code: 400, ..decode_err(e) })?
     } else if media == "multipart/form-data" {
-        let boundary =
-            multer::parse_boundary(&ctype).map_err(|e| form_err("web.incoming_webhook.parse_multipart.app_error", e.to_string()))?;
-        let mut mp = multer::Multipart::new(futures_util::stream::once(async move { Ok::<_, std::io::Error>(body) }), boundary);
+        let boundary = multer::parse_boundary(&ctype)
+            .map_err(|e| form_err("web.incoming_webhook.parse_multipart.app_error", e.to_string()))?;
+        let mut mp =
+            multer::Multipart::new(futures_util::stream::once(async move { Ok::<_, std::io::Error>(body) }), boundary);
         let mut form: Map<String, Value> = Map::new();
         while let Some(f) = mp
             .next_field()
@@ -292,11 +307,14 @@ async fn handle(app: &State, id: &str, headers: &HeaderMap, req: axum::extract::
             };
             form.insert(key, Value::String(text));
         }
-        serde_json::from_value(Value::Object(form)).map_err(|e| form_err("web.incoming_webhook.decode.app_error", e.to_string()))?
+        serde_json::from_value(Value::Object(form))
+            .map_err(|e| form_err("web.incoming_webhook.decode.app_error", e.to_string()))?
     } else {
         decode_request(&body).map_err(decode_err)?
     };
-    app.handle_incoming_webhook(id, r).await.map_err(|e| hook_error("web.incoming_webhook.general.app_error", e, id, &media))
+    app.handle_incoming_webhook(id, r)
+        .await
+        .map_err(|e| hook_error("web.incoming_webhook.general.app_error", e, id, &media))
 }
 
 /// A field of an `application/x-www-form-urlencoded` body.
@@ -375,10 +393,8 @@ impl App {
                 .await?
                 .ok_or_else(|| AppError::not_found("app.channel.get.existing.app_error", ""))?
         } else if let Some(name) = req.channel_name.strip_prefix('@') {
-            let target: Option<(String,)> = sqlx::query_as("SELECT Id FROM Users WHERE Username = $1")
-                .bind(name)
-                .fetch_optional(&self.db)
-                .await?;
+            let target: Option<(String,)> =
+                sqlx::query_as("SELECT Id FROM Users WHERE Username = $1").bind(name).fetch_optional(&self.db).await?;
             let Some((target,)) = target else {
                 return Err(AppError::bad_request("web.incoming_webhook.user.app_error", "").with_param("user", name));
             };
@@ -397,7 +413,9 @@ impl App {
                     return Err(AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.permissions.app_error", ""));
                 }
             }
-            let owner = user.clone().ok_or_else(|| AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.user.app_error", ""))?;
+            let owner = user
+                .clone()
+                .ok_or_else(|| AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.user.app_error", ""))?;
             let s = Session { user_id: owner.id.clone(), roles: owner.roles.clone(), ..Default::default() };
             Arc::new(self.get_or_create_direct(&s, &hook.user_id, &target).await?)
         } else {
@@ -410,9 +428,12 @@ impl App {
             return Err(AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.channel_locked.app_error", ""));
         }
         let Some(user) = user else {
-            return Err(AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.user.app_error", "").with_param("user", &hook.user_id));
+            return Err(AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.user.app_error", "")
+                .with_param("user", &hook.user_id));
         };
-        if channel.r#type != channel::OPEN && !self.user_channel_perm(&user.id, &channel.id, perm::READ_CHANNEL_CONTENT).await.0 {
+        if channel.r#type != channel::OPEN
+            && !self.user_channel_perm(&user.id, &channel.id, perm::READ_CHANNEL_CONTENT).await.0
+        {
             return Err(AppError::new(StatusCode::FORBIDDEN, "web.incoming_webhook.permissions.app_error", ""));
         }
         // checkIncomingWebhookDirectChannelTeamScope
@@ -432,7 +453,9 @@ impl App {
         let mut root = String::new();
         if !req.root_id.is_empty() {
             if !is_valid_id(&req.root_id) {
-                return Err(AppError::bad_request("api.context.invalid_param.app_error", "").with_param("Name", "root_id"));
+                return Err(
+                    AppError::bad_request("api.context.invalid_param.app_error", "").with_param("Name", "root_id")
+                );
             }
             let rp = self
                 .get_single_post(&req.root_id, false)
@@ -523,7 +546,9 @@ impl App {
             post.metadata = Some(PostMetadata { priority: Some(p), ..Default::default() });
         }
         if post.r#type.starts_with("system_") {
-            return Err(AppError::bad_request("api.context.invalid_param.app_error", "").with_param("Name", "post.type"));
+            return Err(
+                AppError::bad_request("api.context.invalid_param.app_error", "").with_param("Name", "post.type")
+            );
         }
         let mut flags = CreateFlags { silent: h.silent, from_incoming_webhook: true, ..Default::default() };
         if self.cfg.bool("ServiceSettings.EnablePostUsernameOverride") {
@@ -540,8 +565,12 @@ impl App {
         for (k, v) in &h.props {
             match k.as_str() {
                 // Raw attachments in props are not Go's typed ones: dropped, as there.
-                "attachments" | "override_icon_url" | "override_icon_emoji" | "override_username"
-                | "webhook_display_name" | "from_webhook" => {}
+                "attachments"
+                | "override_icon_url"
+                | "override_icon_emoji"
+                | "override_username"
+                | "webhook_display_name"
+                | "from_webhook" => {}
                 _ => {
                     post.props.0.insert(k.clone(), v.clone());
                 }
@@ -576,10 +605,16 @@ impl App {
         let splits = split_webhook_post(&post, max, attachments.as_deref())?;
         let mut first = None;
         for split in splits {
-            let f = CreateFlags { allow_mm_blocks_actions: split.props.0.contains_key("mm_blocks_actions"), ..flags.clone() };
+            let f = CreateFlags {
+                allow_mm_blocks_actions: split.props.0.contains_key("mm_blocks_actions"),
+                ..flags.clone()
+            };
             let created = self.create_post_in(split, channel, f, None).await.map_err(|e| {
                 eprintln!("webhook post in {}: {} {}", channel.id, e.id, e.detailed_error);
-                AppError::internal("api.post.create_webhook_post.creating.app_error", format!("{}: {}", e.id, e.detailed_error))
+                AppError::internal(
+                    "api.post.create_webhook_post.creating.app_error",
+                    format!("{}: {}", e.id, e.detailed_error),
+                )
             })?;
             if first.is_none() {
                 first = Some(created);
@@ -590,7 +625,8 @@ impl App {
 }
 
 fn split_too_large() -> AppError {
-    AppError::bad_request("web.incoming_webhook.split_props_length.app_error", "").with_param("Max", &PROPS_MAX_RUNES.to_string())
+    AppError::bad_request("web.incoming_webhook.split_props_length.app_error", "")
+        .with_param("Max", &PROPS_MAX_RUNES.to_string())
 }
 
 /// `splitWebhookPost`: messages over `max` runes in several posts, attachments (and blocks) spread over them so
@@ -602,7 +638,13 @@ fn split_webhook_post(post: &Post, max: usize, attachments: Option<&[MessageAtta
     const DEFERRED: [&str; 5] = ["attachments", "mm_blocks", "blocks", "cards", "mm_blocks_actions"];
     let mut base = post.clone();
     base.message.clear();
-    base.props.0 = post.props.0.iter().filter(|(k, _)| !DEFERRED.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect();
+    base.props.0 = post
+        .props
+        .0
+        .iter()
+        .filter(|(k, _)| !DEFERRED.contains(&k.as_str()))
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     if let Some(a) = post.props.0.get("mm_blocks_actions") {
         base.props.0.insert("mm_blocks_actions".into(), a.clone());
     }
@@ -737,7 +779,13 @@ async fn create_hook(St(app): St<State>, Auth(s): Auth, Body(mut hook): Body<Inc
 }
 
 /// `ValidateIncomingWebhookUser`.
-async fn validate_hook_user(app: &App, s: &Session, user_id: &str, user_admin: bool, channel: &Channel) -> ApiResult<()> {
+async fn validate_hook_user(
+    app: &App,
+    s: &Session,
+    user_id: &str,
+    user_admin: bool,
+    channel: &Channel,
+) -> ApiResult<()> {
     if user_admin && !app.has_perm(s, perm::MANAGE_SYSTEM).await {
         return Err(AppError::new(StatusCode::FORBIDDEN, "api.webhook.incoming.user_role.app_error", ""));
     }
@@ -885,7 +933,10 @@ async fn list_hooks(St(app): St<State>, Auth(s): Auth, Query(q): Query<ListQuery
     for a in &args {
         query = query.bind(a);
     }
-    let hooks = query.fetch_all(&app.db).await.map_err(|e| AppError::internal("app.webhooks.get_incoming_by_user.app_error", e.to_string()))?;
+    let hooks = query
+        .fetch_all(&app.db)
+        .await
+        .map_err(|e| AppError::internal("app.webhooks.get_incoming_by_user.app_error", e.to_string()))?;
     if q.include_total_count.as_deref() == Some("true") {
         let sql = format!("SELECT COUNT(*) FROM IncomingWebhooks WHERE {}", cond.join(" AND "));
         let mut c = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(sql));

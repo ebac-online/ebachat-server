@@ -315,7 +315,8 @@ where
             let conn = connecting.await?;
             let mut extras = http::Extensions::new();
             hyper_util::client::legacy::connect::Connection::connected(&conn).get_extras(&mut extras);
-            let Some(peer) = extras.get::<hyper_util::client::legacy::connect::HttpInfo>().map(|i| i.remote_addr()) else {
+            let Some(peer) = extras.get::<hyper_util::client::legacy::connect::HttpInfo>().map(|i| i.remote_addr())
+            else {
                 return Err(Allowed::forbidden(&[]).into());
             };
             allowed.check_ip(peer.ip()).map_err(|r| Allowed::forbidden(&[r]))?;
@@ -549,7 +550,8 @@ impl App {
         if !matches!(u.scheme(), "http" | "https") || !self.untrusted_url_allowed(&u) {
             return (None, None);
         }
-        let timeout = Duration::from_millis(self.cfg.i64("ExperimentalSettings.LinkMetadataTimeoutMilliseconds").max(1) as u64);
+        let timeout =
+            Duration::from_millis(self.cfg.i64("ExperimentalSettings.LinkMetadataTimeoutMilliseconds").max(1) as u64);
         let res = self
             .link_client()
             .get(u)
@@ -573,7 +575,9 @@ impl App {
             }
             if body.len() >= MAX_RESPONSE
                 || content_type.starts_with("text/html") && contains_ci(&body, b"</head")
-                || content_type.starts_with("image") && !content_type.starts_with("image/gif") && body.len() >= 256 * 1024
+                || content_type.starts_with("image")
+                    && !content_type.starts_with("image/gif")
+                    && body.len() >= 256 * 1024
             {
                 break;
             }
@@ -642,7 +646,8 @@ impl App {
         if !matches!(u.scheme(), "http" | "https") || !self.untrusted_url_allowed(u) {
             return Err("address forbidden".into());
         }
-        let mut res = self.link_client().get(u.clone()).header("Accept", "image/*").send().await.map_err(|e| e.to_string())?;
+        let mut res =
+            self.link_client().get(u.clone()).header("Accept", "image/*").send().await.map_err(|e| e.to_string())?;
         if !res.status().is_success() {
             return Err(format!("status {}", res.status()));
         }
@@ -666,7 +671,8 @@ impl App {
     /// `getLinkMetadataFromOEmbed` + `parseOpenGraphFromOEmbed`.
     async fn fetch_oembed(&self, url: &str, provider: &str) -> Option<OpenGraph> {
         let req = format!("{provider}?format=json&url={}", query_escape(url));
-        let timeout = Duration::from_millis(self.cfg.i64("ExperimentalSettings.LinkMetadataTimeoutMilliseconds").max(1) as u64);
+        let timeout =
+            Duration::from_millis(self.cfg.i64("ExperimentalSettings.LinkMetadataTimeoutMilliseconds").max(1) as u64);
         let res = self
             .link_client()
             .get(req)
@@ -782,7 +788,11 @@ pub fn link_hash(url: &str, ts: i64) -> i64 {
 /// `TruncateOpenGraph`: 300 characters of text, five images without SVGs, nothing else.
 fn truncate(mut og: OpenGraph) -> OpenGraph {
     let cut = |s: &str| {
-        if s.chars().count() > 300 { format!("{}[...]", s.chars().take(300).collect::<String>()) } else { s.to_string() }
+        if s.chars().count() > 300 {
+            format!("{}[...]", s.chars().take(300).collect::<String>())
+        } else {
+            s.to_string()
+        }
     };
     og.title = cut(&og.title);
     og.description = cut(&og.description);
@@ -1095,13 +1105,21 @@ mod tests {
                             Ok(k) => got.extend_from_slice(&buf[..k]),
                         }
                     }
-                    let _ = s.write_all(b"HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                    let _ = s
+                        .write_all(
+                            b"HTTP/1.1 302 Found\r\nLocation: /x\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                        )
+                        .await;
                     let _ = s.shutdown().await;
                 });
             }
         });
         let client = |a: Allowed| {
-            reqwest::Client::builder().connector_layer(ConnectGuard(a)).redirect(reqwest::redirect::Policy::none()).build().unwrap()
+            reqwest::Client::builder()
+                .connector_layer(ConnectGuard(a))
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .unwrap()
         };
         let err = client(allowed(&[])).head(format!("http://127.0.0.1:{port}/")).send().await.unwrap_err();
         let chain = format!("{:?}", err);

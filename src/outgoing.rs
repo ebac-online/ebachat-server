@@ -10,9 +10,9 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::Duration;
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -169,7 +169,13 @@ impl App {
     }
 
     /// `GetOutgoingByTeam` (`...ByUser` with a creator), by display name.
-    async fn outgoing_webhooks(&self, cond: &str, arg: &str, user: &str, page: Option<(i64, i64)>) -> sqlx::Result<Vec<OutgoingWebhook>> {
+    async fn outgoing_webhooks(
+        &self,
+        cond: &str,
+        arg: &str,
+        user: &str,
+        page: Option<(i64, i64)>,
+    ) -> sqlx::Result<Vec<OutgoingWebhook>> {
         let mut sql = format!("{} WHERE {cond} AND DeleteAt = 0", OutgoingWebhook::SELECT);
         if !user.is_empty() {
             sql += " AND CreatorId = $2";
@@ -185,7 +191,13 @@ impl App {
 
     /// `ValidateOutgoingWebhookUser`: a system admin's hook only from a system admin; the hook's user must read
     /// the channel, or see the team.
-    async fn validate_hook_user(&self, s: &Session, user: &User, team_id: &str, channel: Option<&Channel>) -> ApiResult<()> {
+    async fn validate_hook_user(
+        &self,
+        s: &Session,
+        user: &User,
+        team_id: &str,
+        channel: Option<&Channel>,
+    ) -> ApiResult<()> {
         if user.is_system_admin() && !self.has_perm(s, crate::perm::MANAGE_SYSTEM).await {
             return Err(forbidden("api.webhook.incoming.user_role.app_error").detail(format!("user_id={}", user.id)));
         }
@@ -212,7 +224,11 @@ impl App {
                 return Err(if update {
                     bad("api.webhook.update_outgoing.intersect.app_error")
                 } else {
-                    AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.webhook.create_outgoing.intersect.app_error", "")
+                    AppError::new(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "api.webhook.create_outgoing.intersect.app_error",
+                        "",
+                    )
                 });
             }
         }
@@ -222,7 +238,9 @@ impl App {
     /// `SqlWebhookStore.UpdateOutgoing` (no validation, as Go's).
     async fn update_outgoing_row(&self, h: &mut OutgoingWebhook) -> ApiResult<()> {
         h.update_at = now_ms();
-        db::update(&self.db, &*h).await.map_err(|e| AppError::internal("app.webhooks.update_outgoing.app_error", e.to_string()))?;
+        db::update(&self.db, &*h)
+            .await
+            .map_err(|e| AppError::internal("app.webhooks.update_outgoing.app_error", e.to_string()))?;
         Ok(())
     }
 
@@ -304,12 +322,18 @@ async fn create_outgoing(app: &App, mut h: OutgoingWebhook) -> ApiResult<Outgoin
     h.create_at = now_ms();
     h.update_at = h.create_at;
     h.validate()?;
-    db::insert(&app.db, &h).await.map_err(|e| AppError::internal("app.webhooks.save_outgoing.app_error", e.to_string()))?;
+    db::insert(&app.db, &h)
+        .await
+        .map_err(|e| AppError::internal("app.webhooks.save_outgoing.app_error", e.to_string()))?;
     Ok(h)
 }
 
 /// `getOutgoingHooks`: of a channel, a team, or everywhere; only the session's own without `manage_others`.
-async fn list_hooks(St(app): St<State>, Auth(s): Auth, Query(q): Query<HashMap<String, String>>) -> ApiResult<Json<Vec<OutgoingWebhook>>> {
+async fn list_hooks(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult<Json<Vec<OutgoingWebhook>>> {
     let channel_id = q.get("channel_id").map(String::as_str).unwrap_or("");
     let team_id = q.get("team_id").map(String::as_str).unwrap_or("");
     let paged = Some(paging(&q));
@@ -360,7 +384,12 @@ async fn get_hook(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) -> 
 }
 
 /// `updateOutgoingHook`: the body over the hook; its creator, team and times kept.
-async fn update_hook(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, body: Bytes) -> ApiResult<Json<OutgoingWebhook>> {
+async fn update_hook(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<OutgoingWebhook>> {
     require_hook_id(&id)?;
     let mut h: OutgoingWebhook = decode(&body, "outgoing_webhook")?;
     if h.id != id {
@@ -400,7 +429,11 @@ async fn update_hook(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, 
             return Err(forbidden("api.webhook.create_outgoing.permissions.app_error"));
         }
     } else if h.trigger_words.0.is_empty() {
-        return Err(AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.webhook.create_outgoing.triggers.app_error", ""));
+        return Err(AppError::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "api.webhook.create_outgoing.triggers.app_error",
+            "",
+        ));
     }
     app.check_overlap(&old.team_id, &h, true).await?;
     h.creator_id = old.creator_id;
@@ -628,13 +661,11 @@ impl App {
             None => String::new(),
         };
         let attachments = self.process_message_attachments(attachments).await;
-        let typed: Option<Vec<crate::integrations::MessageAttachment>> = if attachments.is_empty() {
-            None
-        } else {
-            serde_json::from_value(Value::Array(attachments)).ok()
-        };
+        let typed: Option<Vec<crate::integrations::MessageAttachment>> =
+            if attachments.is_empty() { None } else { serde_json::from_value(Value::Array(attachments)).ok() };
         let mut username = resp.username.unwrap_or_default();
-        if self.cfg.bool("ServiceSettings.EnablePostUsernameOverride") && !h.username.is_empty() && username.is_empty() {
+        if self.cfg.bool("ServiceSettings.EnablePostUsernameOverride") && !h.username.is_empty() && username.is_empty()
+        {
             username = h.username.clone();
         }
         let mut icon_url = resp.icon_url.unwrap_or_default();
@@ -660,12 +691,18 @@ impl App {
     }
 
     /// `doOutgoingWebhookRequest`: POST, at most `OutgoingIntegrationRequestsTimeout`; an empty answer is none.
-    async fn outgoing_request(&self, url: &str, body: Vec<u8>, content_type: &str) -> Result<Option<HookResponse>, String> {
+    async fn outgoing_request(
+        &self,
+        url: &str,
+        body: Vec<u8>,
+        content_type: &str,
+    ) -> Result<Option<HookResponse>, String> {
         let u = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
         if !self.untrusted_url_allowed(&u) {
             return Err("address forbidden, you may need to set AllowedUntrustedInternalConnections to allow an integration access to your internal network".into());
         }
-        let timeout = Duration::from_secs(self.cfg.i64("ServiceSettings.OutgoingIntegrationRequestsTimeout").max(1) as u64);
+        let timeout =
+            Duration::from_secs(self.cfg.i64("ServiceSettings.OutgoingIntegrationRequestsTimeout").max(1) as u64);
         let resp = self
             .integration_client()
             .post(u)

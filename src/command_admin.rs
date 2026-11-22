@@ -50,8 +50,7 @@ pub fn valid_http_url(u: &str) -> bool {
 /// `IsValidPluginId`.
 fn valid_plugin_id(id: &str) -> bool {
     let n = id.chars().count();
-    (3..=190).contains(&n)
-        && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
+    (3..=190).contains(&n) && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-' || b == b'_')
 }
 
 /// `Command.IsValid`.
@@ -121,7 +120,9 @@ impl App {
             .fetch_optional(&self.db)
             .await
             .map_err(|e| AppError::internal("app.command.getcommand.internal_error", e.to_string()))?
-            .ok_or_else(|| AppError::not_found("store.sql_command.get.missing.app_error", "").with_param("command_id", id))
+            .ok_or_else(|| {
+                AppError::not_found("store.sql_command.get.missing.app_error", "").with_param("command_id", id)
+            })
     }
 
     /// `validateCommandTriggerUniqueness`: neither a built-in's trigger nor another command's of the team.
@@ -131,11 +132,14 @@ impl App {
         if crate::commands::builtins().iter().any(|b| b.trigger.to_lowercase() == trigger) {
             return Err(dup());
         }
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT Id, Trigger FROM Commands WHERE TeamId = $1 AND DeleteAt = 0")
-            .bind(team_id)
-            .fetch_all(&self.db)
-            .await
-            .map_err(|e| AppError::internal("app.command.validatecommandtriggeruniqueness.internal_error", e.to_string()))?;
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT Id, Trigger FROM Commands WHERE TeamId = $1 AND DeleteAt = 0")
+                .bind(team_id)
+                .fetch_all(&self.db)
+                .await
+                .map_err(|e| {
+                    AppError::internal("app.command.validatecommandtriggeruniqueness.internal_error", e.to_string())
+                })?;
         if rows.iter().any(|(id, t)| id != exclude && t.to_lowercase() == trigger) {
             return Err(dup());
         }
@@ -223,7 +227,10 @@ async fn create_command(St(app): St<State>, Auth(s): Auth, body: Bytes) -> ApiRe
     c.trigger = c.trigger.to_lowercase();
     app.check_trigger_unique(&c.team_id, &c.trigger, "").await?;
     if !c.id.is_empty() {
-        return Err(AppError::internal("app.command.createcommand.internal_error", format!("invalid CommandId {}", c.id)));
+        return Err(AppError::internal(
+            "app.command.createcommand.internal_error",
+            format!("invalid CommandId {}", c.id),
+        ));
     }
     c.id = new_id();
     if c.token.is_empty() {
@@ -232,7 +239,9 @@ async fn create_command(St(app): St<State>, Auth(s): Auth, body: Bytes) -> ApiRe
     c.create_at = now_ms();
     c.update_at = c.create_at;
     command_is_valid(&c)?;
-    db::insert(&app.db, &c).await.map_err(|e| AppError::internal("app.command.createcommand.internal_error", e.to_string()))?;
+    db::insert(&app.db, &c)
+        .await
+        .map_err(|e| AppError::internal("app.command.createcommand.internal_error", e.to_string()))?;
     crate::audit::log(&app, Some(&s), "success").await;
     Ok((StatusCode::CREATED, Json(c)).into_response())
 }
@@ -247,7 +256,12 @@ async fn get_command(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>) 
 }
 
 /// `updateCommand`: the body's fields over the command; its id, token, team, creator and times are kept.
-async fn update_command(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, body: Bytes) -> ApiResult<Json<Command>> {
+async fn update_command(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Command>> {
     require_command_id(&id)?;
     let mut c: Command = decode(&body, "command")?;
     if c.id != id {
@@ -280,7 +294,12 @@ struct MoveRequest {
 }
 
 /// `moveCommand`: to a team where both the session and the command's creator may manage commands.
-async fn move_command(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, body: Bytes) -> ApiResult<Json<Value>> {
+async fn move_command(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     require_command_id(&id)?;
     let m: MoveRequest = decode(&body, "team_id")?;
     crate::audit::log(&app, Some(&s), "attempt").await;

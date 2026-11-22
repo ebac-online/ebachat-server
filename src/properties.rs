@@ -15,10 +15,10 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use crate::app::Query;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post};
@@ -277,7 +277,9 @@ fn param<'a>(p: &'a Params, k: &str) -> &'a str {
 /// `{field_id:[A-Za-z0-9]+}`, `{target_id:[A-Za-z0-9]+}`): a path that fails them is the router's 404.
 fn route_ok(p: &Params) -> bool {
     let g = param(p, "group_name").as_bytes();
-    let group = !g.is_empty() && g[0].is_ascii_lowercase() && g.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_');
+    let group = !g.is_empty()
+        && g[0].is_ascii_lowercase()
+        && g.iter().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || *b == b'_');
     let alnum = |k: &str| p.get(k).is_none_or(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_alphanumeric()));
     let ot = p.get("object_type").is_none_or(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_lowercase()));
     group && ot && alnum("field_id") && alnum("target_id")
@@ -321,10 +323,9 @@ fn per_page(q: &HashMap<String, String>) -> i64 {
 fn query_i64(q: &HashMap<String, String>, k: &str) -> ApiResult<Option<i64>> {
     match q.get(k).map(String::as_str).unwrap_or("") {
         "" => Ok(None),
-        v => v
-            .parse::<i64>()
-            .map(Some)
-            .map_err(|_| AppError::invalid_param(k).detail(format!("strconv.ParseInt: parsing \"{v}\": invalid syntax"))),
+        v => v.parse::<i64>().map(Some).map_err(|_| {
+            AppError::invalid_param(k).detail(format!("strconv.ParseInt: parsing \"{v}\": invalid syntax"))
+        }),
     }
 }
 
@@ -356,7 +357,9 @@ fn go_str(o: &Map<String, Value>, k: &str) -> Result<Option<String>, String> {
 fn go_i64(o: &Map<String, Value>, k: &str) -> Result<i64, String> {
     match o.get(k) {
         None | Some(Value::Null) => Ok(0),
-        Some(Value::Number(n)) => n.as_i64().ok_or_else(|| format!("json: cannot unmarshal number {n} into Go value of type int64")),
+        Some(Value::Number(n)) => {
+            n.as_i64().ok_or_else(|| format!("json: cannot unmarshal number {n} into Go value of type int64"))
+        }
         Some(v) => Err(format!("json: cannot unmarshal {} into Go value of type int64", kind(v))),
     }
 }
@@ -868,7 +871,11 @@ impl App {
 
 /// `DefaultPropertyFieldPermissionLevel`.
 fn default_level(f: &Field) -> &'static str {
-    if f.object_type == "template" || f.object_type == "system" || f.target_type == "system" { "sysadmin" } else { "member" }
+    if f.object_type == "template" || f.object_type == "system" || f.target_type == "system" {
+        "sysadmin"
+    } else {
+        "member"
+    }
 }
 
 /// `DefaultPropertyFieldValuesPermissionLevel`.
@@ -1019,7 +1026,10 @@ async fn search_core(app: &App, s: &Session, group: &Group, mut o: SearchOpts) -
         return Err(bad("api.property_field.get.invalid_opts.app_error").detail(e));
     }
     if o.per_page < 1 {
-        return Err(AppError::internal("app.property_field.search.app_error", "per page must be positive integer greater than zero"));
+        return Err(AppError::internal(
+            "app.property_field.search.app_error",
+            "per page must be positive integer greater than zero",
+        ));
     }
     // SqlPropertyFieldStore.SearchPropertyFields
     let delta = o.since > 0;
@@ -1185,7 +1195,12 @@ fn validate_field(f: &Field) -> ApiResult<()> {
     if f.name.is_empty() {
         return Err(with_id(field_invalid("name", "value cannot be empty")));
     }
-    for (k, v) in [("name", &f.name), ("target_type", &f.target_type), ("target_id", &f.target_id), ("object_type", &f.object_type)] {
+    for (k, v) in [
+        ("name", &f.name),
+        ("target_type", &f.target_type),
+        ("target_id", &f.target_id),
+        ("object_type", &f.object_type),
+    ] {
         if n(v) > 255 {
             return Err(with_id(field_invalid(k, "value exceeds maximum length")));
         }
@@ -1220,7 +1235,10 @@ fn validate_field(f: &Field) -> ApiResult<()> {
             )));
         }
         if let Some(i) = opts.iter().position(|o| o.get("rank").is_some_and(|r| !r.is_null())) {
-            return Err(with_id(field_invalid(&format!("attrs.options[{i}].rank"), "rank is not supported on a graph field")));
+            return Err(with_id(field_invalid(
+                &format!("attrs.options[{i}].rank"),
+                "rank is not supported on a graph field",
+            )));
         }
         let mut seen = HashSet::new();
         for (i, o) in opts.iter().enumerate() {
@@ -1245,7 +1263,11 @@ fn validate_field(f: &Field) -> ApiResult<()> {
     if f.update_at == 0 {
         return Err(with_id(field_invalid("update_at", "value cannot be zero")));
     }
-    let slots = [("permission_field", &f.permission_field), ("permission_values", &f.permission_values), ("permission_options", &f.permission_options)];
+    let slots = [
+        ("permission_field", &f.permission_field),
+        ("permission_values", &f.permission_values),
+        ("permission_options", &f.permission_options),
+    ];
     for (k, v) in slots {
         if v.as_ref().is_some_and(|l| !PERMISSION_LEVELS.contains(&l.as_str())) {
             return Err(with_id(field_invalid(k, "invalid permission level")));
@@ -1254,7 +1276,10 @@ fn validate_field(f: &Field) -> ApiResult<()> {
     if f.object_type != "post" && f.object_type != "channel" {
         for (k, v) in slots {
             if v.as_deref() == Some("creator") {
-                return Err(with_id(field_invalid(k, "creator permission level requires a post or channel object type")));
+                return Err(with_id(field_invalid(
+                    k,
+                    "creator permission level requires a post or channel object type",
+                )));
             }
         }
     }
@@ -1267,13 +1292,19 @@ fn validate_field(f: &Field) -> ApiResult<()> {
                 )));
             }
             Some(l) if l != "none" => {
-                return Err(with_id(field_invalid("permission_field", "protected fields must have field permission set to none")));
+                return Err(with_id(field_invalid(
+                    "permission_field",
+                    "protected fields must have field permission set to none",
+                )));
             }
             _ => {}
         }
     }
     if !f.protected && f.permission_field.as_deref() == Some("none") {
-        return Err(with_id(field_invalid("permission_field", "non-protected fields cannot have field permission set to none")));
+        return Err(with_id(field_invalid(
+            "permission_field",
+            "non-protected fields cannot have field permission set to none",
+        )));
     }
     Ok(())
 }
@@ -1321,7 +1352,11 @@ fn option_row(f: &Field, o: &Map<String, Value>, sort_order: i32, now: i64) -> O
     let mut attrs = Map::new();
     let name = o.get("name").and_then(Value::as_str).map(str::to_string);
     let color = o.get("color").and_then(Value::as_str).map(str::to_string);
-    let rank = o.get("rank").and_then(|r| r.as_f64()).filter(|f| f.fract() == 0.0 && f.abs() <= (1u64 << 53) as f64).map(|f| f as i64);
+    let rank = o
+        .get("rank")
+        .and_then(|r| r.as_f64())
+        .filter(|f| f.fract() == 0.0 && f.abs() <= (1u64 << 53) as f64)
+        .map(|f| f as i64);
     for (k, v) in o {
         let promoted = k == "id"
             || k == "parents"
@@ -1399,9 +1434,13 @@ impl App {
             .iter()
             .map(option_from_row)
             .collect::<ApiResult<Vec<_>>>()?;
-            let own: HashMap<&str, &OptionRow> = existing.iter().filter(|r| r.field_id == f.id).map(|r| (r.id.as_str(), r)).collect();
-            let inherited: HashSet<&str> =
-                existing.iter().filter(|r| f.is_linked() && r.field_id == f.link_source()).map(|r| r.id.as_str()).collect();
+            let own: HashMap<&str, &OptionRow> =
+                existing.iter().filter(|r| r.field_id == f.id).map(|r| (r.id.as_str(), r)).collect();
+            let inherited: HashSet<&str> = existing
+                .iter()
+                .filter(|r| f.is_linked() && r.field_id == f.link_source())
+                .map(|r| r.id.as_str())
+                .collect();
             let (add, replacing) = graph::option_parent_links(f)
                 .map_err(|e| graph::invalid_input("PropertyOption", "parents", &f.id, &e))?;
             let mut upserts = vec![];
@@ -1439,12 +1478,14 @@ impl App {
             }
             self.upsert_option_rows(tx, &f.group_id, &upserts, now).await?;
             if !deletes.is_empty() {
-                sqlx::query("UPDATE PropertyOptions SET DeleteAt = $1, UpdateAt = $1 WHERE FieldID = $2 AND ID = ANY($3)")
-                    .bind(now)
-                    .bind(&f.id)
-                    .bind(&deletes)
-                    .execute(&mut **tx)
-                    .await?;
+                sqlx::query(
+                    "UPDATE PropertyOptions SET DeleteAt = $1, UpdateAt = $1 WHERE FieldID = $2 AND ID = ANY($3)",
+                )
+                .bind(now)
+                .bind(&f.id)
+                .bind(&deletes)
+                .execute(&mut **tx)
+                .await?;
                 sqlx::query(
                     "DELETE FROM PropertyOptionEdges WHERE FieldID = $1 AND (ChildOptionID = ANY($2) OR ParentOptionID = ANY($2))",
                 )
@@ -1601,7 +1642,8 @@ async fn create_field(
     }
     // SqlPropertyFieldStore.Create
     if !f.id.is_empty() {
-        return Err(bad("app.property.invalid_input.app_error").detail(format!("invalid input: entity: PropertyField field: id value: {}", f.id)));
+        return Err(bad("app.property.invalid_input.app_error")
+            .detail(format!("invalid input: entity: PropertyField field: id value: {}", f.id)));
     }
     f.id = new_id();
     f.create_at = now_ms();
@@ -1674,12 +1716,18 @@ async fn link_to_template(app: &App, f: &mut Field) -> ApiResult<()> {
         ));
     }
     if src.object_type != "template" {
-        return Err(refuse("app.property_field.create.linked_source_not_template.app_error", "can only link to template fields".into()));
+        return Err(refuse(
+            "app.property_field.create.linked_source_not_template.app_error",
+            "can only link to template fields".into(),
+        ));
     }
     if f.target_type != src.target_type {
         return Err(refuse(
             "app.property_field.create.linked_target_type_mismatch.app_error",
-            format!("linked field target_type {:?} must match source template target_type {:?}", f.target_type, src.target_type),
+            format!(
+                "linked field target_type {:?} must match source template target_type {:?}",
+                f.target_type, src.target_type
+            ),
         ));
     }
     if src.is_linked() {
@@ -1724,7 +1772,9 @@ fn decode_patch(o: &Map<String, Value>) -> Result<FieldPatch, String> {
     let attrs = match o.get("attrs") {
         None | Some(Value::Null) => None,
         Some(Value::Object(m)) => Some(Some(m.clone())),
-        Some(v) => return Err(format!("json: cannot unmarshal {} into Go value of type model.StringInterface", kind(v))),
+        Some(v) => {
+            return Err(format!("json: cannot unmarshal {} into Go value of type model.StringInterface", kind(v)));
+        }
     };
     // target_id and target_type are read and then dropped by the handler; a bad type still fails the decode.
     go_str(o, "target_id")?;
@@ -1752,7 +1802,8 @@ async fn patch_field(
     let field_id = require_field_id(&p)?;
     let group = app.v2_group(param(&p, "group_name")).await?;
     require_channel_attribute_license(&group, std::slice::from_ref(&ot))?;
-    let o = body_object(&body, "property_field_patch")?.ok_or_else(|| AppError::invalid_param("property_field_patch"))?;
+    let o =
+        body_object(&body, "property_field_patch")?.ok_or_else(|| AppError::invalid_param("property_field_patch"))?;
     let mut patch = decode_patch(&o).map_err(|e| AppError::invalid_param("property_field_patch").detail(e))?;
     if let Some(n) = patch.name.as_mut() {
         *n = n.trim().to_string();
@@ -1842,7 +1893,10 @@ async fn update_field(app: &App, group: &Group, existing: &Field, mut f: Field) 
     let linked_change = |id: &str, detail: &str| bad(id).with_param("FieldID", &existing.id).detail(detail.to_string());
     if existing.is_linked() {
         if f.kind != existing.kind {
-            return Err(linked_change("app.property_field.update.linked_type_change.app_error", "cannot modify type of a linked field"));
+            return Err(linked_change(
+                "app.property_field.update.linked_type_change.app_error",
+                "cannot modify type of a linked field",
+            ));
         }
         if existing.attr("options") != f.attr("options") {
             return Err(linked_change(
@@ -1851,7 +1905,10 @@ async fn update_field(app: &App, group: &Group, existing: &Field, mut f: Field) 
             ));
         }
         if f.is_linked() && f.link_source() != existing.link_source() {
-            return Err(linked_change("app.property_field.update.cannot_change_link_target.app_error", "cannot change link target"));
+            return Err(linked_change(
+                "app.property_field.update.cannot_change_link_target.app_error",
+                "cannot change link target",
+            ));
         }
     } else if f.is_linked() {
         return Err(linked_change(
@@ -1860,7 +1917,8 @@ async fn update_field(app: &App, group: &Group, existing: &Field, mut f: Field) 
         ));
     }
     if existing.protected {
-        return Err(err(StatusCode::FORBIDDEN, "app.property_field.update.protected.app_error").with_param("FieldID", &existing.id));
+        return Err(err(StatusCode::FORBIDDEN, "app.property_field.update.protected.app_error")
+            .with_param("FieldID", &existing.id));
     }
     // PropertyService.UpdatePropertyFields: the hooks (the license), then updatePropertyFields.
     if group.name == ACCESS_CONTROL {
@@ -1911,7 +1969,10 @@ async fn update_field(app: &App, group: &Group, existing: &Field, mut f: Field) 
         return Err(err(StatusCode::CONFLICT, "app.property_field.update.type_change_with_dependents.app_error")
             .detail("cannot change type of a field with active linked dependents"));
     }
-    if stored.name != f.name || stored.target_type != f.target_type || stored.target_id != f.target_id || stored.object_type != f.object_type
+    if stored.name != f.name
+        || stored.target_type != f.target_type
+        || stored.target_id != f.target_id
+        || stored.object_type != f.object_type
     {
         let level = app.name_conflict(&f, &f.id).await?;
         if !level.is_empty() {
@@ -2014,7 +2075,8 @@ async fn blocking_child_below(app: &App, f: &Field, ids: &[String]) -> ApiResult
             .fetch_all(&app.db)
             .await?;
     let going: HashSet<&String> = ids.iter().collect();
-    let staying: HashMap<&String, &String> = edges.iter().filter(|(_, c)| !going.contains(c)).map(|(p, c)| (p, c)).collect();
+    let staying: HashMap<&String, &String> =
+        edges.iter().filter(|(_, c)| !going.contains(c)).map(|(p, c)| (p, c)).collect();
     Ok(ids.iter().enumerate().find_map(|(i, id)| staying.get(id).map(|c| (i, (*c).clone()))))
 }
 
@@ -2054,13 +2116,15 @@ async fn delete_field(
         .bind(&group.id)
         .execute(&mut *tx)
         .await?;
-    let n = sqlx::query("UPDATE PropertyFields SET DeleteAt = $1, UpdateAt = GREATEST($1, UpdateAt + 1) WHERE ID = $2 AND GroupID = $3")
-        .bind(now)
-        .bind(&existing.id)
-        .bind(&group.id)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
+    let n = sqlx::query(
+        "UPDATE PropertyFields SET DeleteAt = $1, UpdateAt = GREATEST($1, UpdateAt + 1) WHERE ID = $2 AND GroupID = $3",
+    )
+    .bind(now)
+    .bind(&existing.id)
+    .bind(&group.id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if n == 0 {
         return Err(property_not_found());
     }
@@ -2085,7 +2149,11 @@ async fn delete_field(
         _ => false,
     };
     if ok {
-        app.hub.publish("property_field_deleted", json!({"field_id": existing.id, "object_type": existing.object_type}), b);
+        app.hub.publish(
+            "property_field_deleted",
+            json!({"field_id": existing.id, "object_type": existing.object_type}),
+            b,
+        );
     }
     Ok(crate::users::ok().into_response())
 }
@@ -2111,7 +2179,10 @@ async fn field_for_options(app: &App, p: &Params) -> ApiResult<(Group, Field)> {
 /// `requireOptionsAddressable`.
 fn require_options_addressable(f: &Field) -> ApiResult<()> {
     if f.is_v1() {
-        return Err(options_refused(&format!("field {} predates addressable options; its option list is part of the field", f.id)));
+        return Err(options_refused(&format!(
+            "field {} predates addressable options; its option list is part of the field",
+            f.id
+        )));
     }
     if !f.supports_options() {
         return Err(options_refused(&format!("a {} field has no options", f.kind)));
@@ -2167,7 +2238,8 @@ impl App {
         .bind(keys)
         .fetch_all(&self.db)
         .await?;
-        let mut out = rows.iter().map(|r| option_from_row(r).map(|o| o.option(&f.id))).collect::<ApiResult<Vec<_>>>()?;
+        let mut out =
+            rows.iter().map(|r| option_from_row(r).map(|o| o.option(&f.id))).collect::<ApiResult<Vec<_>>>()?;
         if f.kind == "graph" {
             self.attach_parents(f, &mut out).await?;
         }
@@ -2264,7 +2336,12 @@ async fn get_options(
         .iter()
         .map(option_from_row)
         .collect::<ApiResult<Vec<_>>>()?;
-    let mut page = OptionPage { options: vec![], has_more: rows.len() as i64 == per_page, next_cursor_create_at: 0, next_cursor_id: String::new() };
+    let mut page = OptionPage {
+        options: vec![],
+        has_more: rows.len() as i64 == per_page,
+        next_cursor_create_at: 0,
+        next_cursor_id: String::new(),
+    };
     if page.has_more
         && let Some(last) = rows.last()
     {
@@ -2294,8 +2371,10 @@ fn decode_options(body: &[u8]) -> ApiResult<Vec<Option<Map<String, Value>>>> {
             }
             Value::Null => out.push(None),
             v => {
-                return Err(AppError::invalid_param("property_field_options")
-                    .detail(format!("json: cannot unmarshal {} into Go value of type model.PropertyFieldOption", kind(&v))));
+                return Err(AppError::invalid_param("property_field_options").detail(format!(
+                    "json: cannot unmarshal {} into Go value of type model.PropertyFieldOption",
+                    kind(&v)
+                )));
             }
         }
     }
@@ -2312,7 +2391,8 @@ fn check_option_count(n: usize) -> ApiResult<()> {
         return Err(bad("api.property_field.options.empty_body.app_error"));
     }
     if n > OPTIONS_MAX_PER_REQUEST {
-        return Err(bad("api.property_field.options.too_many_items.request_error").with_param("Max", &OPTIONS_MAX_PER_REQUEST.to_string()));
+        return Err(bad("api.property_field.options.too_many_items.request_error")
+            .with_param("Max", &OPTIONS_MAX_PER_REQUEST.to_string()));
     }
     Ok(())
 }
@@ -2346,19 +2426,28 @@ fn prepare_options(f: &Field, items: &[Option<Map<String, Value>>], require_id: 
             name: m.get("name").and_then(Value::as_str).unwrap_or("").trim().to_string(),
             color: m.get("color").and_then(Value::as_str).map(str::to_string),
             attrs: m.get("attrs").and_then(Value::as_object).cloned(),
-            parents: m.get("parents").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()),
+            parents: m
+                .get("parents")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()),
         };
         if require_id && o.id.is_empty() {
             return Err(option_error(i, "names no option"));
         }
         if !require_id && !o.id.is_empty() {
-            return Err(option_error(i, &format!("carries the id {:?}; an option's identifier is assigned when it is created", o.id)));
+            return Err(option_error(
+                i,
+                &format!("carries the id {:?}; an option's identifier is assigned when it is created", o.id),
+            ));
         }
         if require_id && !seen.insert(o.id.clone()) {
             return Err(option_error(i, &format!("names option {:?}, which is already in the list", o.id)));
         }
         if o.parents.is_some() && f.kind != "graph" {
-            return Err(option_error(i, &format!("carries parents, and the options of a {} field form no hierarchy", f.kind)));
+            return Err(option_error(
+                i,
+                &format!("carries parents, and the options of a {} field form no hierarchy", f.kind),
+            ));
         }
         if o.name.is_empty() {
             return Err(option_error(i, "is not a valid option: name cannot be empty"));
@@ -2367,7 +2456,10 @@ fn prepare_options(f: &Field, items: &[Option<Map<String, Value>>], require_id: 
             if ps.len() > graph::MAX_PARENTS {
                 return Err(option_error(
                     i,
-                    &format!("is not a valid option: no option may have more than {} options directly above it", graph::MAX_PARENTS),
+                    &format!(
+                        "is not a valid option: no option may have more than {} options directly above it",
+                        graph::MAX_PARENTS
+                    ),
                 ));
             }
             let mut seen = HashSet::new();
@@ -2376,11 +2468,16 @@ fn prepare_options(f: &Field, items: &[Option<Map<String, Value>>], require_id: 
                     return Err(option_error(i, "is not a valid option: a parent name cannot be empty"));
                 }
                 if !seen.insert(p) {
-                    return Err(option_error(i, &format!("is not a valid option: parent {p:?} is named more than once")));
+                    return Err(option_error(
+                        i,
+                        &format!("is not a valid option: parent {p:?} is named more than once"),
+                    ));
                 }
             }
         }
-        if let Some(k) = o.attrs.as_ref().and_then(|a| ["id", "name", "color", "rank"].into_iter().find(|k| a.contains_key(*k))) {
+        if let Some(k) =
+            o.attrs.as_ref().and_then(|a| ["id", "name", "color", "rank"].into_iter().find(|k| a.contains_key(*k)))
+        {
             return Err(option_error(i, &format!("is not a valid option: attrs cannot carry the reserved key {k:?}")));
         }
         out.push(o);
@@ -2404,7 +2501,14 @@ fn prepare_options(f: &Field, items: &[Option<Map<String, Value>>], require_id: 
 impl App {
     /// `MutateOptions`: the options written (appended after the field's last) and the parent links added and removed,
     /// the field's `UpdateAt` moved on so a concurrent field write fails.
-    async fn write_options(&self, f: &Field, options: &[NewOption], append: bool, add: &[graph::Edge], remove: &[graph::Edge]) -> ApiResult<()> {
+    async fn write_options(
+        &self,
+        f: &Field,
+        options: &[NewOption],
+        append: bool,
+        add: &[graph::Edge],
+        remove: &[graph::Edge],
+    ) -> ApiResult<()> {
         let now = now_ms();
         let mut tx = self.db.begin().await?;
         if !add.is_empty() || !remove.is_empty() {
@@ -2499,7 +2603,9 @@ async fn create_options(
             .await?;
         let total = held as usize + options.len();
         if total > GRAPH_MAX_OPTIONS {
-            return Err(options_refused(&format!("the field would hold {total} options, and no field may hold more than {GRAPH_MAX_OPTIONS}")));
+            return Err(options_refused(&format!(
+                "the field would hold {total} options, and no field may hold more than {GRAPH_MAX_OPTIONS}"
+            )));
         }
     }
     let names: Vec<String> = options.iter().map(|o| o.name.clone()).collect();
@@ -2552,7 +2658,12 @@ async fn patch_options(
         if cur.read_only {
             return Err(option_error(
                 i,
-                &format!("names option {:?}, which field {} inherits from field {}; change it there instead", o.id, f.id, f.link_source()),
+                &format!(
+                    "names option {:?}, which field {} inherits from field {}; change it there instead",
+                    o.id,
+                    f.id,
+                    f.link_source()
+                ),
             ));
         }
         if o.color.is_none() {
@@ -2570,7 +2681,10 @@ async fn patch_options(
         for (i, o) in options.iter().enumerate() {
             if let Some(t) = taken.iter().find(|t| t.name == o.name && t.id != o.id) {
                 let owner = if t.read_only { f.link_source() } else { &f.id };
-                return Err(option_error(i, &format!("renames option {:?} to {:?}, which field {owner} already has", o.id, o.name)));
+                return Err(option_error(
+                    i,
+                    &format!("renames option {:?} to {:?}, which field {owner} already has", o.id, o.name),
+                ));
             }
         }
         require_names_free_of_dependents(&app, &f, &renamed).await?;
@@ -2634,14 +2748,21 @@ async fn delete_options(
         if o.read_only {
             return Err(option_error(
                 i,
-                &format!("names option {id:?}, which field {} inherits from field {}; delete it there instead", f.id, f.link_source()),
+                &format!(
+                    "names option {id:?}, which field {} inherits from field {}; delete it there instead",
+                    f.id,
+                    f.link_source()
+                ),
             ));
         }
     }
     if let Some((at, child)) = blocking_child_below(&app, &f, &ids).await? {
         return Err(option_error(
             at,
-            &format!("names option {:?}, which option {child:?} is still below; remove that one too or move it first", ids[at]),
+            &format!(
+                "names option {:?}, which option {child:?} is still below; remove that one too or move it first",
+                ids[at]
+            ),
         ));
     }
     let now = now_ms();
@@ -2664,11 +2785,13 @@ async fn delete_options(
         .bind(&ids)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM PropertyOptionEdges WHERE FieldID = $1 AND (ChildOptionID = ANY($2) OR ParentOptionID = ANY($2))")
-        .bind(&f.id)
-        .bind(&ids)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "DELETE FROM PropertyOptionEdges WHERE FieldID = $1 AND (ChildOptionID = ANY($2) OR ParentOptionID = ANY($2))",
+    )
+    .bind(&f.id)
+    .bind(&ids)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     app.options_changed(&group.id, &f.id, &connection_id(&headers)).await;
     Ok(crate::users::ok().into_response())
@@ -2731,7 +2854,9 @@ async fn target_access(app: &App, s: &Session, group: &Group, ot: &str, target: 
             }
         }
         "template" => {
-            return Err(bad("api.property_value.template_no_values.app_error").detail("template fields cannot have values"));
+            return Err(
+                bad("api.property_value.template_no_values.app_error").detail("template fields cannot have values")
+            );
         }
         _ => return Err(bad("api.property_value.invalid_object_type.app_error")),
     }
@@ -2782,7 +2907,14 @@ async fn get_system_values(
 }
 
 /// `getPropertyValuesCore`.
-async fn values_core(app: &App, s: &Session, p: &Params, q: &HashMap<String, String>, ot: &str, target: &str) -> ApiResult<Response> {
+async fn values_core(
+    app: &App,
+    s: &Session,
+    p: &Params,
+    q: &HashMap<String, String>,
+    ot: &str,
+    target: &str,
+) -> ApiResult<Response> {
     let group = app.v2_group(param(p, "group_name")).await?;
     require_channel_attribute_license(&group, &[ot.to_string()])?;
     target_access(app, s, &group, ot, target, false).await?;
@@ -2813,11 +2945,16 @@ async fn values_core(app: &App, s: &Session, p: &Params, q: &HashMap<String, Str
     }
     let per_page = per_page(q);
     if per_page < 1 {
-        return Err(AppError::internal("app.property_value.search.app_error", "per page must be positive integer greater than zero"));
+        return Err(AppError::internal(
+            "app.property_value.search.app_error",
+            "per page must be positive integer greater than zero",
+        ));
     }
     // SqlPropertyValueStore.SearchPropertyValues
     let delta = since > 0;
-    let mut sql = Sql::new(&format!("SELECT {VALUE_COLS} FROM PropertyValues WHERE GroupID = $1 AND TargetType = $2 AND TargetID = $3"));
+    let mut sql = Sql::new(&format!(
+        "SELECT {VALUE_COLS} FROM PropertyValues WHERE GroupID = $1 AND TargetType = $2 AND TargetID = $3"
+    ));
     sql.args.extend([Arg::S(group.id.clone()), Arg::S(ot.into()), Arg::S(target.into())]);
     if !cursor_empty {
         let (col, at) = if delta { ("UpdateAt", cursor_update) } else { ("CreateAt", cursor_create) };
@@ -2875,9 +3012,11 @@ async fn patch_system_values(
 fn sanitize_value(v: &Value) -> Value {
     match v {
         Value::String(s) => Value::String(s.trim().to_string()),
-        Value::Array(a) if a.iter().all(Value::is_string) => {
-            Value::Array(a.iter().filter_map(|x| x.as_str().map(str::trim).filter(|t| !t.is_empty()).map(|t| Value::String(t.into()))).collect())
-        }
+        Value::Array(a) if a.iter().all(Value::is_string) => Value::Array(
+            a.iter()
+                .filter_map(|x| x.as_str().map(str::trim).filter(|t| !t.is_empty()).map(|t| Value::String(t.into())))
+                .collect(),
+        ),
         v => v.clone(),
     }
 }
@@ -2904,8 +3043,10 @@ async fn patch_values_core(
             }
             Value::Null => items.push((String::new(), None)),
             v => {
-                return Err(AppError::invalid_param("property_values")
-                    .detail(format!("json: cannot unmarshal {} into Go value of type model.PropertyValuePatchItem", kind(&v))));
+                return Err(AppError::invalid_param("property_values").detail(format!(
+                    "json: cannot unmarshal {} into Go value of type model.PropertyValuePatchItem",
+                    kind(&v)
+                )));
             }
         }
     }
@@ -2914,7 +3055,8 @@ async fn patch_values_core(
         return Err(bad("api.property_value.patch.empty_body.app_error"));
     }
     if items.len() > MAX_VALUE_PATCH_ITEMS {
-        return Err(bad("api.property_value.patch.too_many_items.request_error").with_param("Max", &MAX_VALUE_PATCH_ITEMS.to_string()));
+        return Err(bad("api.property_value.patch.too_many_items.request_error")
+            .with_param("Max", &MAX_VALUE_PATCH_ITEMS.to_string()));
     }
     let mut seen = HashSet::new();
     for (fid, _) in &items {
@@ -2933,7 +3075,8 @@ async fn patch_values_core(
     let by_id: HashMap<&str, &Field> = fields.iter().map(|f| (f.id.as_str(), f)).collect();
     for (fid, _) in &items {
         let Some(f) = by_id.get(fid.as_str()) else {
-            return Err(err(StatusCode::NOT_FOUND, "api.property_value.patch.field_not_found.app_error").with_param("FieldID", fid));
+            return Err(err(StatusCode::NOT_FOUND, "api.property_value.patch.field_not_found.app_error")
+                .with_param("FieldID", fid));
         };
         if f.object_type != ot {
             return Err(object_type_mismatch());
@@ -2954,7 +3097,8 @@ async fn patch_values_core(
     // PropertyService.UpsertPropertyValues: rejectTemplateValues, then the store.
     if fields.iter().any(|f| f.object_type == "template") {
         let f = fields.iter().find(|f| f.object_type == "template").unwrap();
-        return Err(bad("app.property_value.template_no_values.app_error").detail(format!("template field {:?} cannot have values", f.id)));
+        return Err(bad("app.property_value.template_no_values.app_error")
+            .detail(format!("template field {:?} cannot have values", f.id)));
     }
     let now = now_ms();
     let mut tx = app.db.begin().await?;
@@ -3012,7 +3156,11 @@ async fn patch_values_core(
             })
             .collect();
         let values = order_value_json(&withheld, &out);
-        app.hub.publish("property_values_updated", json!({"object_type": ot, "target_id": target, "values": values}), b);
+        app.hub.publish(
+            "property_values_updated",
+            json!({"object_type": ot, "target_id": target, "values": values}),
+            b,
+        );
     }
     Ok(axum::Json(out).into_response())
 }
@@ -3054,7 +3202,9 @@ mod tests {
 
     #[test]
     fn route_patterns() {
-        let p = |g: &str, o: &str| HashMap::from([("group_name".to_string(), g.to_string()), ("object_type".to_string(), o.to_string())]);
+        let p = |g: &str, o: &str| {
+            HashMap::from([("group_name".to_string(), g.to_string()), ("object_type".to_string(), o.to_string())])
+        };
         assert!(route_ok(&p("access_control", "system")));
         assert!(!route_ok(&p("9abc", "system")));
         assert!(!route_ok(&p("_x", "system")));

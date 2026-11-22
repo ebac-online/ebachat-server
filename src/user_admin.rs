@@ -9,9 +9,9 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -571,7 +571,9 @@ async fn update_active(
     app.update_active(user, active).await?;
     crate::audit::log(&app, Some(&s), &format!("user_id={uid} active={active}")).await;
     if self_deactivate {
-        crate::email::go(&app, "deactivate email", move |app| async move { crate::email::send_deactivate(&app, &email, &locale).await });
+        crate::email::go(&app, "deactivate email", move |app| async move {
+            crate::email::send_deactivate(&app, &email, &locale).await
+        });
     }
     app.hub.publish("user_activation_status_change", json!({}), Broadcast::default());
     Ok(ok())
@@ -682,7 +684,8 @@ async fn update_mfa(
         if !app.cfg.bool("ServiceSettings.EnableMultifactorAuthentication") {
             return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "mfa.mfa_disabled.app_error", ""));
         }
-        let used = mfa_used_timestamps(&app, &user_id).await.map_err(|e| AppError::internal("mfa.activate.app_error", e))?;
+        let used =
+            mfa_used_timestamps(&app, &user_id).await.map_err(|e| AppError::internal("mfa.activate.app_error", e))?;
         let Ok(Some(used)) = mfa_authenticate(&user.mfa_secret, code, now_ms() / 1000, used) else {
             // Go answers a code that is not six digits with a 500; both are a bad token here.
             return Err(AppError::new(StatusCode::UNAUTHORIZED, "mfa.activate.bad_token.app_error", ""));
@@ -698,17 +701,21 @@ async fn update_mfa(
             .map_err(|e| AppError::internal("mfa.activate.app_error", e.to_string()))?;
     } else {
         // UpdateMfaActive, then UpdateMfaSecret (which empties the used time steps).
-        sqlx::query("UPDATE Users SET MfaActive = false, MfaSecret = '', MfaUsedTimestamps = '[]', UpdateAt = $2 WHERE Id = $1")
-            .bind(&user_id)
-            .bind(now_ms())
-            .execute(&app.db)
-            .await
-            .map_err(|e| AppError::internal("mfa.deactivate.app_error", e.to_string()))?;
+        sqlx::query(
+            "UPDATE Users SET MfaActive = false, MfaSecret = '', MfaUsedTimestamps = '[]', UpdateAt = $2 WHERE Id = $1",
+        )
+        .bind(&user_id)
+        .bind(now_ms())
+        .execute(&app.db)
+        .await
+        .map_err(|e| AppError::internal("mfa.deactivate.app_error", e.to_string()))?;
     }
     app.invalidate_user(&user_id);
     if let Some(u) = app.user(&user_id).await? {
         let (email, locale) = (u.email.clone(), u.locale.clone());
-        crate::email::go(&app, "mfa change email", move |app| async move { crate::email::send_mfa_change(&app, &email, activate, &locale).await });
+        crate::email::go(&app, "mfa change email", move |app| async move {
+            crate::email::send_mfa_change(&app, &email, activate, &locale).await
+        });
     }
     crate::audit::log(&app, Some(&s), "success - mfa updated").await;
     Ok(ok())
@@ -895,7 +902,9 @@ async fn verify_email(St(app): St<State>, body: Bytes) -> ApiResult<Json<Value>>
     app.verify_user_email(&extra.user_id, &new_email).await.map_err(|_| bad())?;
     if user.email != new_email {
         let (old, locale) = (user.email.clone(), user.locale.clone());
-        crate::email::go(&app, "email change email", move |app| async move { crate::email::send_email_change(&app, &old, &new_email, &locale).await });
+        crate::email::go(&app, "email change email", move |app| async move {
+            crate::email::send_email_change(&app, &old, &new_email, &locale).await
+        });
     }
     delete_token(&app, &t.token).await;
     crate::audit::log(&app, None, "Email Verified").await;
@@ -1471,14 +1480,15 @@ impl App {
         if user.failed_attempts as i64 >= max {
             return Err(too_many_attempts());
         }
-        let claimed = sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts + 1 WHERE Id = $1 AND FailedAttempts < $2")
-            .bind(&user.id)
-            .bind(max as i32)
-            .execute(&self.db)
-            .await
-            .map_err(attempts_error)?
-            .rows_affected()
-            == 1;
+        let claimed =
+            sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts + 1 WHERE Id = $1 AND FailedAttempts < $2")
+                .bind(&user.id)
+                .bind(max as i32)
+                .execute(&self.db)
+                .await
+                .map_err(attempts_error)?
+                .rows_affected()
+                == 1;
         self.invalidate_user(&user.id);
         if !claimed {
             return Err(too_many_attempts());
@@ -1486,7 +1496,11 @@ impl App {
         // checkUserPassword: a wrong (or empty) password keeps the slot.
         match crate::password::check(&user.password, password).await {
             crate::password::Check::Mismatch => {
-                return Err(AppError::new(StatusCode::UNAUTHORIZED, "api.user.check_user_password.invalid.app_error", ""));
+                return Err(AppError::new(
+                    StatusCode::UNAUTHORIZED,
+                    "api.user.check_user_password.invalid.app_error",
+                    "",
+                ));
             }
             crate::password::Check::MatchOld => {
                 if let Err(e) = self.store_password(&user.id, &crate::password::hash(password).await).await {
@@ -1502,7 +1516,11 @@ impl App {
             }
             return Err(e);
         }
-        sqlx::query("UPDATE Users SET FailedAttempts = 0 WHERE Id = $1").bind(&user.id).execute(&self.db).await.map_err(attempts_error)?;
+        sqlx::query("UPDATE Users SET FailedAttempts = 0 WHERE Id = $1")
+            .bind(&user.id)
+            .execute(&self.db)
+            .await
+            .map_err(attempts_error)?;
         self.invalidate_user(&user.id);
         // CheckUserPostflightAuthenticationCriteria
         if !user.email_verified && self.cfg.bool("EmailSettings.RequireEmailVerification") {
@@ -1513,10 +1531,11 @@ impl App {
 
     /// `DecrementFailedPasswordAttempts`: a slot given back (Go only logs a failure).
     async fn refund_attempt(&self, user_id: &str) {
-        let _ = sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts - 1 WHERE Id = $1 AND FailedAttempts > 0")
-            .bind(user_id)
-            .execute(&self.db)
-            .await;
+        let _ =
+            sqlx::query("UPDATE Users SET FailedAttempts = FailedAttempts - 1 WHERE Id = $1 AND FailedAttempts > 0")
+                .bind(user_id)
+                .execute(&self.db)
+                .await;
         self.invalidate_user(user_id);
     }
 
@@ -1550,7 +1569,9 @@ async fn mfa_used_timestamps(app: &App, user_id: &str) -> Result<Vec<i64>, Strin
     let Some(Value::Array(a)) = v.map(|j| j.0) else { return Ok(vec![]) };
     a.iter()
         .map(|t| match t {
-            Value::String(s) => s.parse::<i64>().map_err(|e| format!("unable to retrieve the DisallowReuse slice: {e}")),
+            Value::String(s) => {
+                s.parse::<i64>().map_err(|e| format!("unable to retrieve the DisallowReuse slice: {e}"))
+            }
             Value::Number(n) => n.as_i64().ok_or_else(|| "unable to retrieve the DisallowReuse slice".to_string()),
             _ => Err("unable to retrieve the DisallowReuse slice".to_string()),
         })

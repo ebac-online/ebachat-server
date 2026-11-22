@@ -154,7 +154,8 @@ async fn seed(users: usize, channels: usize, posts: usize) {
     eprintln!("{} channels", chans.len());
 
     // The public channel every user is in: one post reaches every socket.
-    let public = match api(&c, M::GET, &g(&format!("/teams/{team_id}/channels/name/bench-public")), &admin, None).await {
+    let public = match api(&c, M::GET, &g(&format!("/teams/{team_id}/channels/name/bench-public")), &admin, None).await
+    {
         Ok(ch) => ch,
         Err(_) => {
             let body = json!({"team_id": team_id, "name": "bench-public", "display_name": "Bench public", "type": "O"});
@@ -163,7 +164,9 @@ async fn seed(users: usize, channels: usize, posts: usize) {
     };
     let pid = public["id"].as_str().unwrap().to_string();
     for chunk in ids.chunks(100) {
-        if let Err(e) = api(&c, M::POST, &g(&format!("/channels/{pid}/members")), &admin, Some(&json!({"user_ids": chunk}))).await {
+        if let Err(e) =
+            api(&c, M::POST, &g(&format!("/channels/{pid}/members")), &admin, Some(&json!({"user_ids": chunk}))).await
+        {
             eprintln!("add members to bench-public: {e}");
         }
     }
@@ -549,14 +552,8 @@ fn marker(text: &str) -> Option<u64> {
 /// Total and idle jiffies of the whole machine, from /proc/stat (zeros elsewhere).
 fn machine_cpu() -> (f64, f64) {
     let s = std::fs::read_to_string("/proc/stat").unwrap_or_default();
-    let v: Vec<f64> = s
-        .lines()
-        .next()
-        .unwrap_or("")
-        .split_whitespace()
-        .skip(1)
-        .filter_map(|x| x.parse().ok())
-        .collect();
+    let v: Vec<f64> =
+        s.lines().next().unwrap_or("").split_whitespace().skip(1).filter_map(|x| x.parse().ok()).collect();
     if v.len() < 5 {
         return (0.0, 0.0);
     }
@@ -613,11 +610,30 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
     eprintln!("{online} websockets in {:.1} s", t_conn.elapsed().as_secs_f64());
     tokio::time::sleep(Duration::from_secs(5)).await;
     let (rss_ws, _) = proc_stat(pid).unwrap_or_default();
-    println!("server {base}  pid {pid}  {online} clients online  RSS start {} MB, with websockets {} MB", rss0 / 1024, rss_ws / 1024);
+    println!(
+        "server {base}  pid {pid}  {online} clients online  RSS start {} MB, with websockets {} MB",
+        rss0 / 1024,
+        rss_ws / 1024
+    );
     println!(
         "{:>5} {:>4} | {:>7} {:>5} | {:>6} {:>6} {:>6} | {:>5} {:>8} {:>8} {:>8} {:>9} | {:>6} {:>6} {:>5} {:>5} {:>5}",
-        "rps", "pps", "ok rps", "err", "p50", "p99", "post99", "pub/s", "dlv p50", "dlv p99", "dlv max", "dlv/exp",
-        "srv %", "pg %", "RSS", "mach%", "lg %"
+        "rps",
+        "pps",
+        "ok rps",
+        "err",
+        "p50",
+        "p99",
+        "post99",
+        "pub/s",
+        "dlv p50",
+        "dlv p99",
+        "dlv max",
+        "dlv/exp",
+        "srv %",
+        "pg %",
+        "RSS",
+        "mach%",
+        "lg %"
     );
 
     let ops = mix(true);
@@ -629,7 +645,12 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
     stages.extend(plan.iter().map(|&(r, p)| (r, p, seconds)));
     for (si, &(rps, pps, secs)) in stages.iter().enumerate() {
         cur.store(si, Ordering::Relaxed);
-        let st_cpu0 = (proc_stat(pid).map(|p| p.1).unwrap_or(0.0), pg_cpu(), machine_cpu(), proc_stat(std::process::id()).map(|p| p.1).unwrap_or(0.0));
+        let st_cpu0 = (
+            proc_stat(pid).map(|p| p.1).unwrap_or(0.0),
+            pg_cpu(),
+            machine_cpu(),
+            proc_stat(std::process::id()).map(|p| p.1).unwrap_or(0.0),
+        );
         let t0 = Instant::now();
         let end = t0 + Duration::from_secs(secs);
         let mut rss_max = 0;
@@ -646,7 +667,8 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
                     let (c, all, public, base) = (c.clone(), all.clone(), public.clone(), base.clone());
                     tokio::spawn(async move {
                         let sent = now_us();
-                        let body = json!({"channel_id": *public, "message": format!("public lgts{sent} hello everyone")});
+                        let body =
+                            json!({"channel_id": *public, "message": format!("public lgts{sent} hello everyone")});
                         let r = api(&c, reqwest::Method::POST, &format!("{base}/api/v4/posts"), &t, Some(&body)).await;
                         let st = &all[si];
                         match r {
@@ -678,7 +700,18 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
                 continue;
             }
             let mut w = rng.below(total_w as usize) as u32;
-            let op = ops.iter().find(|(_, x)| if w < *x { true } else { w -= x; false }).unwrap().0;
+            let op = ops
+                .iter()
+                .find(|(_, x)| {
+                    if w < *x {
+                        true
+                    } else {
+                        w -= x;
+                        false
+                    }
+                })
+                .unwrap()
+                .0;
             let i = rng.below(tokens.len());
             let seed = rng.next();
             let (c, tokens, member_of, all_users, all, base) =
@@ -693,10 +726,13 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
                 let g = |p: &str| format!("{base}/api/v4{p}");
                 use reqwest::Method as M;
                 let now = (now_us() / 1000) as i64;
-                let some_users = |rng: &mut Rng, n: usize| -> Vec<String> { (0..n).map(|_| rng.pick(&all_users).clone()).collect() };
+                let some_users =
+                    |rng: &mut Rng, n: usize| -> Vec<String> { (0..n).map(|_| rng.pick(&all_users).clone()).collect() };
                 let t0 = Instant::now();
                 let r = match op {
-                    Op::StatusIds => api(&c, M::POST, &g("/users/status/ids"), t, Some(&json!(some_users(&mut rng, 50)))).await,
+                    Op::StatusIds => {
+                        api(&c, M::POST, &g("/users/status/ids"), t, Some(&json!(some_users(&mut rng, 50)))).await
+                    }
                     Op::UsersIds => api(&c, M::POST, &g("/users/ids"), t, Some(&json!(some_users(&mut rng, 20)))).await,
                     Op::Me => api(&c, M::GET, &g("/users/me"), t, None).await,
                     Op::View => {
@@ -704,10 +740,18 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
                         api(&c, M::POST, &g("/channels/members/me/view"), t, Some(&body)).await
                     }
                     Op::PostsSince => {
-                        api(&c, M::GET, &g(&format!("/channels/{}/posts?since={}", rng.pick(&chs), now - 60_000)), t, None).await
+                        api(
+                            &c,
+                            M::GET,
+                            &g(&format!("/channels/{}/posts?since={}", rng.pick(&chs), now - 60_000)),
+                            t,
+                            None,
+                        )
+                        .await
                     }
                     Op::CreatePost => {
-                        let body = json!({"channel_id": rng.pick(&chs), "message": format!("load message {}", rng.next())});
+                        let body =
+                            json!({"channel_id": rng.pick(&chs), "message": format!("load message {}", rng.next())});
                         api(&c, M::POST, &g("/posts"), t, Some(&body)).await
                     }
                 };
@@ -734,7 +778,8 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
         }
         let st = &all[si];
         let ok: u64 = st.lat.iter().map(Hist::count).sum();
-        let err: u64 = st.errors.lock().unwrap().values().map(|e| e.0).sum::<u64>() + st.public_err.load(Ordering::Relaxed);
+        let err: u64 =
+            st.errors.lock().unwrap().values().map(|e| e.0).sum::<u64>() + st.public_err.load(Ordering::Relaxed);
         // All operations together, then POST /posts alone.
         let merged = Hist::new();
         for h in &st.lat {
@@ -746,7 +791,13 @@ async fn steps(base: String, pid: u32, plan: Vec<(u32, u32)>, seconds: u64) {
         let pub_ok = st.public_ok.load(Ordering::Relaxed);
         let dlv = st.delivery.count();
         let (mt, mi) = (m1.0 - st_cpu0.2.0, m1.1 - st_cpu0.2.1);
-        let dmax = st.delivery.0.iter().rposition(|b| b.load(Ordering::Relaxed) > 0).map(|i| Hist::value(i) / 1000.0).unwrap_or(f64::NAN);
+        let dmax = st
+            .delivery
+            .0
+            .iter()
+            .rposition(|b| b.load(Ordering::Relaxed) > 0)
+            .map(|i| Hist::value(i) / 1000.0)
+            .unwrap_or(f64::NAN);
         println!(
             "{:>5} {:>4} | {:>7.1} {:>5} | {:>6.2} {:>6.2} {:>6.2} | {:>5.1} {:>8.2} {:>8.2} {:>8.1} {:>9} | {:>6.0} {:>6.0} {:>5} {:>5.0} {:>5.0}",
             rps,

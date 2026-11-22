@@ -436,7 +436,8 @@ pub struct ThreadFollowerData {
 
 /// `json.Unmarshal` of a line into `LineImportData`: Go's syntax and type errors, keys matched case-insensitively.
 pub fn decode_line(raw: &[u8]) -> Result<LineData, String> {
-    crate::gojson::unmarshal(raw, &go_types::LINE).and_then(|v| serde_json::from_value::<LineData>(v).map_err(|e| e.to_string()))
+    crate::gojson::unmarshal(raw, &go_types::LINE)
+        .and_then(|v| serde_json::from_value::<LineData>(v).map_err(|e| e.to_string()))
 }
 
 // ---------- the line types as Go declares them, for its decoding (`json.Unmarshal` into `LineImportData`) ----------
@@ -478,8 +479,10 @@ mod go_types {
             ("info", st(&INFO)),
         ],
     );
-    static INFO: Struct =
-        imp("VersionInfoImportData", &[("generator", PLAIN), ("version", PLAIN), ("created", PLAIN), ("additional", Ty::Raw)]);
+    static INFO: Struct = imp(
+        "VersionInfoImportData",
+        &[("generator", PLAIN), ("version", PLAIN), ("created", PLAIN), ("additional", Ty::Raw)],
+    );
     pub static EXPORT_SCOPE: Struct = imp("ExportScopeAdditional", &[("team_name", PLAIN), ("channel_name", PLAIN)]);
     static TEAM: Struct = imp(
         "TeamImportData",
@@ -545,7 +548,14 @@ mod go_types {
     };
     static BOT: Struct = imp(
         "BotImportData",
-        &[("Avatar.profile_image", S), ("username", S), ("owner", S), ("display_name", S), ("description", S), ("delete_at", I64)],
+        &[
+            ("Avatar.profile_image", S),
+            ("username", S),
+            ("owner", S),
+            ("display_name", S),
+            ("description", S),
+            ("delete_at", I64),
+        ],
     );
     static USER_NOTIFY: Struct = imp(
         "UserNotifyPropsImportData",
@@ -562,7 +572,12 @@ mod go_types {
     );
     static USER_TEAM: Struct = imp(
         "UserTeamImportData",
-        &[("name", S), ("roles", S), ("theme", S), ("channels", list(&USER_CHANNEL, "[]imports.UserChannelImportData"))],
+        &[
+            ("name", S),
+            ("roles", S),
+            ("theme", S),
+            ("channels", list(&USER_CHANNEL, "[]imports.UserChannelImportData")),
+        ],
     );
     static USER_CHANNEL: Struct = imp(
         "UserChannelImportData",
@@ -837,7 +852,9 @@ pub fn in_role(roles: &str, role: &str) -> bool {
 }
 
 pub fn validate_scheme(d: &SchemeData) -> IResult<()> {
-    let Some(scope) = &d.scope else { return Err(IErr::bad("app.import.validate_scheme_import_data.null_scope.error")) };
+    let Some(scope) = &d.scope else {
+        return Err(IErr::bad("app.import.validate_scheme_import_data.null_scope.error"));
+    };
     let wrong = || Err(IErr::bad("app.import.validate_scheme_import_data.wrong_roles_for_scope.error"));
     match scope.as_str() {
         "team" => {
@@ -897,7 +914,8 @@ pub fn validate_role(d: &RoleData) -> IResult<()> {
     }
     for p in d.permissions.iter().flatten() {
         if !crate::roles::ALL_PERMISSIONS.lines().any(|l| l == p) && !DEPRECATED_PERMISSIONS.contains(&p.as_str()) {
-            return Err(IErr::bad("app.import.validate_role_import_data.invalid_permission.error").detail(format!("permission{p}")));
+            return Err(IErr::bad("app.import.validate_role_import_data.invalid_permission.error")
+                .detail(format!("permission{p}")));
         }
     }
     Ok(())
@@ -922,8 +940,23 @@ const DEPRECATED_PERMISSIONS: &[&str] = &[
 /// `IsReservedTeamName`.
 fn reserved_team_name(s: &str) -> bool {
     const RESERVED: &[&str] = &[
-        "admin", "api", "channel", "claim", "error", "files", "help", "landing", "login", "mfa", "oauth", "plug",
-        "plugins", "post", "signup", "boards", "playbooks",
+        "admin",
+        "api",
+        "channel",
+        "claim",
+        "error",
+        "files",
+        "help",
+        "landing",
+        "login",
+        "mfa",
+        "oauth",
+        "plug",
+        "plugins",
+        "post",
+        "signup",
+        "boards",
+        "playbooks",
     ];
     let l = s.to_lowercase();
     RESERVED.iter().any(|r| l.starts_with(r))
@@ -999,9 +1032,11 @@ fn validate_profile_image(path: &Option<String>, data: &Option<ZipRef>) -> IResu
         return Err(IErr::bad("app.import.validate_user_import_data.invalid_image_path.error").p("Path", p));
     }
     match std::fs::metadata(p) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Err(IErr::bad("app.import.validate_user_import_data.profile_image.error")
-            .status(404)
-            .wrap(format!("stat {p}: no such file or directory"))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            Err(IErr::bad("app.import.validate_user_import_data.profile_image.error")
+                .status(404)
+                .wrap(format!("stat {p}: no such file or directory")))
+        }
         Err(e) => Err(IErr::bad("app.import.validate_user_import_data.profile_image.error").wrap(e)),
         Ok(_) => Ok(()),
     }
@@ -1033,7 +1068,9 @@ pub fn validate_user(d: &UserData) -> IResult<()> {
     if let Some(s) = &d.auth_service
         && !["", "email", "gitlab", "saml", "ldap", "google", "office365", "openid"].contains(&s.as_str())
     {
-        return Err(IErr::bad("app.import.validate_user_teams_import_data.invalid_auth_service.error").p("AuthService", s));
+        return Err(
+            IErr::bad("app.import.validate_user_teams_import_data.invalid_auth_service.error").p("AuthService", s)
+        );
     }
     if d.password.as_deref().is_some_and(|p| p.is_empty() || p.len() > USER_PASSWORD_MAX) {
         return e("password_length");
@@ -1126,7 +1163,9 @@ pub fn validate_bot(d: &BotData) -> IResult<()> {
     }
     match &d.owner {
         None => Err(IErr::bad("app.import.validate_bot_import_data.owner_missing.error")),
-        Some(o) if !crate::user_edit::valid_username(o) => Err(IErr::bad("app.import.validate_user_import_data.username_invalid.error")),
+        Some(o) if !crate::user_edit::valid_username(o) => {
+            Err(IErr::bad("app.import.validate_user_import_data.username_invalid.error"))
+        }
         _ => Ok(()),
     }
 }
@@ -1216,9 +1255,12 @@ pub fn validate_reply(d: &ReplyData, parent_create_at: i64, max_post_size: usize
         None => return e("create_at_missing"),
         Some(0) => return e("create_at_zero"),
         Some(t) if t < parent_create_at => {
-            crate::logs::warn(&format!(
-                "Reply CreateAt is before parent post CreateAt reply_create_at={t} parent_create_at={parent_create_at}"
-            ), &[]);
+            crate::logs::warn(
+                &format!(
+                    "Reply CreateAt is before parent post CreateAt reply_create_at={t} parent_create_at={parent_create_at}"
+                ),
+                &[],
+            );
         }
         _ => {}
     }
@@ -1231,7 +1273,9 @@ pub fn validate_reply(d: &ReplyData, parent_create_at: i64, max_post_size: usize
     }
     for a in d.attachments.iter().flatten() {
         if let Err(err) = validate_attachment(a) {
-            return Err(IErr::bad("app.import.validate_reply_import_data.attachment.error").status(404).wrap(err.text()));
+            return Err(IErr::bad("app.import.validate_reply_import_data.attachment.error")
+                .status(404)
+                .wrap(err.text()));
         }
     }
     Ok(())
@@ -1269,7 +1313,9 @@ pub fn validate_post(d: &PostData, max_post_size: usize) -> IResult<()> {
     }
     for a in d.attachments.iter().flatten() {
         if let Err(err) = validate_attachment(a) {
-            return Err(IErr::bad("app.import.validate_post_import_data.attachment.error").status(404).wrap(err.text()));
+            return Err(IErr::bad("app.import.validate_post_import_data.attachment.error")
+                .status(404)
+                .wrap(err.text()));
         }
     }
     for f in d.thread_followers.iter().flatten() {
@@ -1301,7 +1347,9 @@ pub fn validate_direct_channel(d: &DirectChannelData) -> IResult<()> {
         let in_participants = d.participants.iter().flatten().any(|m| m.username.as_deref() == Some(f.as_str()));
         let in_members = d.members.iter().flatten().any(|m| m == f);
         if !in_participants && !in_members {
-            return Err(IErr::bad("app.import.validate_direct_channel_import_data.unknown_favoriter.error").p("Username", f));
+            return Err(
+                IErr::bad("app.import.validate_direct_channel_import_data.unknown_favoriter.error").p("Username", f)
+            );
         }
     }
     Ok(())
@@ -1343,7 +1391,9 @@ pub fn validate_direct_post(d: &DirectPostData, max_post_size: usize) -> IResult
     }
     for a in d.attachments.iter().flatten() {
         if let Err(err) = validate_attachment(a) {
-            return Err(IErr::bad("app.import.validate_direct_post_import_data.attachment.error").status(404).wrap(err.text()));
+            return Err(IErr::bad("app.import.validate_direct_post_import_data.attachment.error")
+                .status(404)
+                .wrap(err.text()));
         }
     }
     for f in d.thread_followers.iter().flatten() {
@@ -1398,7 +1448,8 @@ fn validate_guest_roles(d: &UserData) -> IResult<()> {
         if let Some(cs) = t.channels.as_ref().filter(|c| !c.is_empty()) {
             has_channels = true;
             channels += cs.len();
-            channel_guests += cs.iter().filter(|c| c.roles.as_deref().is_some_and(|r| in_role(r, "channel_guest"))).count();
+            channel_guests +=
+                cs.iter().filter(|c| c.roles.as_deref().is_some_and(|r| in_role(r, "channel_guest"))).count();
         }
     }
     let team_guest = team_guests == teams.len();
@@ -1410,9 +1461,11 @@ fn validate_guest_roles(d: &UserData) -> IResult<()> {
                 .p("TotalTeams", teams.len()));
         }
         if has_channels && !channel_guest {
-            return Err(IErr::bad("app.import.validate_user_import_data.system_guest_missing_channel_guest_roles.error")
-                .p("ChannelGuestCount", channel_guests)
-                .p("TotalChannels", channels));
+            return Err(IErr::bad(
+                "app.import.validate_user_import_data.system_guest_missing_channel_guest_roles.error",
+            )
+            .p("ChannelGuestCount", channel_guests)
+            .p("TotalChannels", channels));
         }
         return Ok(());
     }
@@ -1566,13 +1619,17 @@ pub async fn import_job(app: &State, job: &mut Job) -> Result<(), String> {
             }
         }
     };
-    let archive = tokio::task::spawn_blocking(move || Archive::new(src))
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| IErr::new("ImportProcessWorker", "import_process.worker.do_job.open_file", 500).wrap(zip_error_text(&e)).text())?;
+    let archive =
+        tokio::task::spawn_blocking(move || Archive::new(src)).await.map_err(|e| e.to_string())?.map_err(|e| {
+            IErr::new("ImportProcessWorker", "import_process.worker.do_job.open_file", 500)
+                .wrap(zip_error_text(&e))
+                .text()
+        })?;
     let jsonl = archive.file_names().find(|n| is_root_jsonl(n)).map(str::to_string);
     let Some(jsonl) = jsonl else {
-        return Err(IErr::new("ImportProcessWorker", "import_process.worker.do_job.missing_jsonl", 400).detail("jsonFile was nil").text());
+        return Err(IErr::new("ImportProcessWorker", "import_process.worker.do_job.missing_jsonl", 400)
+            .detail("jsonFile was nil")
+            .text());
     };
     if jsonl.contains("..") {
         return Err(IErr::new("ImportProcessWorker", "import_process.worker.do_job.open_file", 403)
@@ -1585,7 +1642,11 @@ pub async fn import_job(app: &State, job: &mut Job) -> Result<(), String> {
         tokio::task::spawn_blocking(move || a.by_name(&name).map(|f| f.size()))
             .await
             .map_err(|e| e.to_string())?
-            .map_err(|e| IErr::new("ImportProcessWorker", "import_process.worker.do_job.open_file", 500).wrap(zip_error_text(&e)).text())?
+            .map_err(|e| {
+                IErr::new("ImportProcessWorker", "import_process.worker.do_job.open_file", 500)
+                    .wrap(zip_error_text(&e))
+                    .text()
+            })?
     };
     let extract_content = job.get("extract_content") == Some("true");
     let workers = job
@@ -1616,7 +1677,8 @@ pub async fn import_job(app: &State, job: &mut Job) -> Result<(), String> {
     const CHECKPOINT_THRESHOLD: u64 = 100 * 1024 * 1024;
     let mut cp = Checkpoints { app, job, file: file.clone() };
     let checkpoints = if jsonl_size >= CHECKPOINT_THRESHOLD { Some(&mut cp) } else { None };
-    let (line, err) = bulk_import(app, &archive, &jsonl, false, extract_content, workers, EXPORT_DATA_DIR, &opts, checkpoints).await;
+    let (line, err) =
+        bulk_import(app, &archive, &jsonl, false, extract_content, workers, EXPORT_DATA_DIR, &opts, checkpoints).await;
     if let Some(err) = err {
         job.data_mut().insert("line_number".into(), line.to_string());
         return Err(err.text());
@@ -1674,7 +1736,11 @@ fn split_trim_names(s: &str) -> Vec<String> {
 }
 
 /// `processAttachmentPaths`: each path under `base`, its file in the zip when there is one.
-fn process_attachment_paths(files: &mut Option<Vec<AttachmentData>>, base: &str, map: &HashMap<String, ZipRef>) -> Result<(), String> {
+fn process_attachment_paths(
+    files: &mut Option<Vec<AttachmentData>>,
+    base: &str,
+    map: &HashMap<String, ZipRef>,
+) -> Result<(), String> {
     let mut errs = vec![];
     for f in files.iter_mut().flatten() {
         let Some(original) = f.path.clone() else { continue };
@@ -1840,7 +1906,8 @@ async fn worker(
                 }
                 direct_posts.push(l);
                 if direct_posts.len() >= MULTIPLE_POSTS_THRESHOLD
-                    && let Err((line, e)) = ctx.import_multiple_direct_post_lines(std::mem::take(&mut direct_posts)).await
+                    && let Err((line, e)) =
+                        ctx.import_multiple_direct_post_lines(std::mem::take(&mut direct_posts)).await
                 {
                     let _ = errors.send((e, line));
                 }
@@ -1985,12 +2052,18 @@ pub async fn bulk_import(
             }
         };
         if let Err(e) = process_attachments(&mut line, import_path, &attached) {
-            crate::logs::warn(&format!("Error while processing import attachments. Objects might be broken. err={e}"), &[]);
+            crate::logs::warn(
+                &format!("Error while processing import attachments. Objects might be broken. err={e}"),
+                &[],
+            );
         }
 
         if line_number == 1 {
             if line.r#type != "version" || line.version.is_none() {
-                return (line_number, Some(IErr::bad("app.import.process_import_data_file_version_line.invalid_version.error")));
+                return (
+                    line_number,
+                    Some(IErr::bad("app.import.process_import_data_file_version_line.invalid_version.error")),
+                );
             }
             if line.version != Some(1) {
                 return (line_number, Some(IErr::bad("app.import.bulk_import.unsupported_version.error")));
@@ -1999,9 +2072,10 @@ pub async fn bulk_import(
                 match crate::gojson::unmarshal_value(&add, &go_types::EXPORT_SCOPE)
                     .and_then(|v| serde_json::from_value::<ExportScope>(v).map_err(|e| e.to_string()))
                 {
-                    Err(e) => crate::logs::warn(&format!(
-                        "Failed to decode export scope metadata; proceeding as unscoped import err={e}"
-                    ), &[]),
+                    Err(e) => crate::logs::warn(
+                        &format!("Failed to decode export scope metadata; proceeding as unscoped import err={e}"),
+                        &[],
+                    ),
                     Ok(scope) => {
                         source_team = scope.team_name.clone();
                         source_channel = scope.channel_name.clone();
@@ -2020,8 +2094,13 @@ pub async fn bulk_import(
                 }
             }
             if !o.destination_channel.is_empty() && source_channel.is_empty() {
-                return (line_number, Some(IErr::bad("app.import.bulk_import.destination_channel_requires_channel_scope.error")
-                    .detail("--destination-channel-name requires a channel-scoped export")));
+                return (
+                    line_number,
+                    Some(
+                        IErr::bad("app.import.bulk_import.destination_channel_requires_channel_scope.error")
+                            .detail("--destination-channel-name requires a channel-scoped export"),
+                    ),
+                );
             }
             if !o.destination_channel.is_empty() && split_trim_names(&source_team).len() != 1 {
                 return (line_number, Some(IErr::bad("app.import.bulk_import.destination_channel_requires_single_team_scope.error")
@@ -2048,16 +2127,22 @@ pub async fn bulk_import(
         }
         let Some(c) = ctx.clone() else { break };
 
-        if o.resume_from_line > 0 && line_number <= o.resume_from_line && (line.r#type == "post" || line.r#type == "direct_post") {
+        if o.resume_from_line > 0
+            && line_number <= o.resume_from_line
+            && (line.r#type == "post" || line.r#type == "direct_post")
+        {
             continue;
         }
 
         if line.r#type != last_type {
             if let Some(s) = segment.take() {
-                crate::logs::info(&format!(
-                    "Finished parsing segment, waiting for workers to finish old_segment={last_type} new_segment={}",
-                    line.r#type
-                ), &[]);
+                crate::logs::info(
+                    &format!(
+                        "Finished parsing segment, waiting for workers to finish old_segment={last_type} new_segment={}",
+                        line.r#type
+                    ),
+                    &[],
+                );
                 s.drain().await;
                 while let Ok((e, n)) = erx.try_recv() {
                     if stop_on_error(&e, deactivate_missing_users) {
@@ -2068,10 +2153,13 @@ pub async fn bulk_import(
                     cp.save((line_number - 1).max(o.resume_from_line) as i64).await;
                 }
             }
-            crate::logs::info(&format!(
-                "Starting workers for new segment old_segment={last_type} new_segment={} workers={workers}",
-                line.r#type
-            ), &[]);
+            crate::logs::info(
+                &format!(
+                    "Starting workers for new segment old_segment={last_type} new_segment={} workers={workers}",
+                    line.r#type
+                ),
+                &[],
+            );
             last_type = line.r#type.clone();
             segment = Some(Segment::start(&c, workers, &etx));
         }
@@ -2087,8 +2175,12 @@ pub async fn bulk_import(
                 if let Some(s) = segment.take() {
                     s.drain().await;
                 }
-                return (line_number, Some(IErr::bad("app.import.bulk_import.destination_team_requires_single_team_scope.error")
-                    .detail("--destination-team-name requires a single-team export; this export contains multiple teams")));
+                return (
+                    line_number,
+                    Some(IErr::bad("app.import.bulk_import.destination_team_requires_single_team_scope.error").detail(
+                        "--destination-team-name requires a single-team export; this export contains multiple teams",
+                    )),
+                );
             }
         }
         if !o.destination_team.is_empty() && !source_team.is_empty() {
@@ -2195,23 +2287,74 @@ mod tests {
         let cases: &[(&str, &str)] = &[
             ("{\"type\":\"version\",\"version\":1}", ""),
             ("{\"Type\":\"version\",\"VERSION\":1}", ""),
-            ("{\"type\":\"user\",\"User\":{\"Username\":\"a\",\"EMAIL\":\"a@x.org\",\"Teams\":[{\"NAME\":\"t\",\"Channels\":[{\"Name\":\"c\",\"Favorite\":true}]}]}}", ""),
-            ("{\"type\":\"user\",\"user\":{\"username\":5}}", "json: cannot unmarshal number into Go struct field UserImportData.user.username of type string"),
-            ("{\"type\":\"user\",\"user\":{\"teams\":[{\"name\":true}]}}", "json: cannot unmarshal bool into Go struct field UserTeamImportData.user.teams.name of type string"),
-            ("{\"type\":\"user\",\"user\":{\"teams\":\"x\"}}", "json: cannot unmarshal string into Go struct field UserImportData.user.teams of type []imports.UserTeamImportData"),
-            ("{\"type\":\"user\",\"user\":{\"delete_at\":1.5}}", "json: cannot unmarshal number 1.5 into Go struct field UserImportData.user.delete_at of type int64"),
-            ("{\"type\":\"user\",\"user\":{\"delete_at\":\"1\"}}", "json: cannot unmarshal string into Go struct field UserImportData.user.delete_at of type int64"),
-            ("{\"type\":\"user\",\"user\":{\"delete_at\":1e3}}", "json: cannot unmarshal number 1e3 into Go struct field UserImportData.user.delete_at of type int64"),
-            ("{\"type\":\"user\",\"user\":{\"custom_status\":{\"expires_at\":5}}}", "Time.UnmarshalJSON: input is not a JSON string"),
-            ("{\"type\":\"user\",\"user\":\"x\"}", "json: cannot unmarshal string into Go struct field LineImportData.user of type imports.UserImportData"),
-            ("{\"type\":\"post\",\"post\":{\"props\":[1]}}", "json: cannot unmarshal array into Go struct field PostImportData.post.props of type model.StringInterface"),
-            ("{\"type\":\"post\",\"post\":{\"reactions\":[{\"user\":1}]}}", "json: cannot unmarshal number into Go struct field ReactionImportData.post.reactions.user of type string"),
-            ("{\"type\":\"post\",\"post\":{\"flagged_by\":[1]}}", "json: cannot unmarshal number into Go struct field PostImportData.post.flagged_by of type string"),
-            ("{\"type\":\"direct_channel\",\"direct_channel\":{\"participants\":\"x\"}}", "json: cannot unmarshal string into Go struct field DirectChannelImportData.direct_channel.participants of type []*imports.DirectChannelMemberImportData"),
-            ("{\"type\":\"direct_channel\",\"direct_channel\":{\"participants\":[5]}}", "json: cannot unmarshal number into Go struct field DirectChannelImportData.direct_channel.participants of type imports.DirectChannelMemberImportData"),
-            ("{\"type\":\"channel\",\"channel\":{\"type\":1}}", "json: cannot unmarshal number into Go struct field ChannelImportData.channel.type of type model.ChannelType"),
-            ("{\"type\":\"version\",\"version\":\"1\"}", "json: cannot unmarshal string into Go struct field LineImportData.version of type int"),
-            ("{\"type\":\"version\",\"version\":1.0}", "json: cannot unmarshal number 1.0 into Go struct field LineImportData.version of type int"),
+            (
+                "{\"type\":\"user\",\"User\":{\"Username\":\"a\",\"EMAIL\":\"a@x.org\",\"Teams\":[{\"NAME\":\"t\",\"Channels\":[{\"Name\":\"c\",\"Favorite\":true}]}]}}",
+                "",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"username\":5}}",
+                "json: cannot unmarshal number into Go struct field UserImportData.user.username of type string",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"teams\":[{\"name\":true}]}}",
+                "json: cannot unmarshal bool into Go struct field UserTeamImportData.user.teams.name of type string",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"teams\":\"x\"}}",
+                "json: cannot unmarshal string into Go struct field UserImportData.user.teams of type []imports.UserTeamImportData",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"delete_at\":1.5}}",
+                "json: cannot unmarshal number 1.5 into Go struct field UserImportData.user.delete_at of type int64",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"delete_at\":\"1\"}}",
+                "json: cannot unmarshal string into Go struct field UserImportData.user.delete_at of type int64",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"delete_at\":1e3}}",
+                "json: cannot unmarshal number 1e3 into Go struct field UserImportData.user.delete_at of type int64",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"custom_status\":{\"expires_at\":5}}}",
+                "Time.UnmarshalJSON: input is not a JSON string",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":\"x\"}",
+                "json: cannot unmarshal string into Go struct field LineImportData.user of type imports.UserImportData",
+            ),
+            (
+                "{\"type\":\"post\",\"post\":{\"props\":[1]}}",
+                "json: cannot unmarshal array into Go struct field PostImportData.post.props of type model.StringInterface",
+            ),
+            (
+                "{\"type\":\"post\",\"post\":{\"reactions\":[{\"user\":1}]}}",
+                "json: cannot unmarshal number into Go struct field ReactionImportData.post.reactions.user of type string",
+            ),
+            (
+                "{\"type\":\"post\",\"post\":{\"flagged_by\":[1]}}",
+                "json: cannot unmarshal number into Go struct field PostImportData.post.flagged_by of type string",
+            ),
+            (
+                "{\"type\":\"direct_channel\",\"direct_channel\":{\"participants\":\"x\"}}",
+                "json: cannot unmarshal string into Go struct field DirectChannelImportData.direct_channel.participants of type []*imports.DirectChannelMemberImportData",
+            ),
+            (
+                "{\"type\":\"direct_channel\",\"direct_channel\":{\"participants\":[5]}}",
+                "json: cannot unmarshal number into Go struct field DirectChannelImportData.direct_channel.participants of type imports.DirectChannelMemberImportData",
+            ),
+            (
+                "{\"type\":\"channel\",\"channel\":{\"type\":1}}",
+                "json: cannot unmarshal number into Go struct field ChannelImportData.channel.type of type model.ChannelType",
+            ),
+            (
+                "{\"type\":\"version\",\"version\":\"1\"}",
+                "json: cannot unmarshal string into Go struct field LineImportData.version of type int",
+            ),
+            (
+                "{\"type\":\"version\",\"version\":1.0}",
+                "json: cannot unmarshal number 1.0 into Go struct field LineImportData.version of type int",
+            ),
             ("{\"type\":5}", "json: cannot unmarshal number into Go struct field LineImportData.type of type string"),
             ("[1]", "json: cannot unmarshal array into Go value of type imports.LineImportData"),
             ("\"x\"", "json: cannot unmarshal string into Go value of type imports.LineImportData"),
@@ -2230,20 +2373,38 @@ mod tests {
             ("{\"a\":", "unexpected end of JSON input"),
             ("{\"type\":\"user\"} x", "invalid character 'x' after top-level value"),
             ("{\"type\":\"user\",\"user\":{\"username\":\"a\",\"username\":\"b\",\"Username\":\"c\"}}", ""),
-            ("{\"type\":\"role\",\"role\":{\"permissions\":[\"a\",null,\"b\"],\"scheme_managed\":\"yes\"}}", "json: cannot unmarshal string into Go struct field RoleImportData.role.scheme_managed of type bool"),
+            (
+                "{\"type\":\"role\",\"role\":{\"permissions\":[\"a\",null,\"b\"],\"scheme_managed\":\"yes\"}}",
+                "json: cannot unmarshal string into Go struct field RoleImportData.role.scheme_managed of type bool",
+            ),
             ("{\"type\":\"emoji\",\"emoji\":{\"name\":\"x\"},\"emoji\":{\"image\":\"y\"}}", ""),
             ("{\"type\":\"emoji\",\"emoji\":{\"name\":\"x\"},\"emoji\":null}", ""),
-            ("{\"type\":\"scheme\",\"scheme\":{\"default_team_admin_role\":{\"name\":3}}}", "json: cannot unmarshal number into Go struct field RoleImportData.scheme.default_team_admin_role.name of type string"),
-            ("{\"type\":\"post\",\"post\":{\"replies\":[{\"attachments\":[{\"path\":2}]}]}}", "json: cannot unmarshal number into Go struct field AttachmentImportData.post.replies.attachments.path of type string"),
-            ("{\"type\":\"user\",\"user\":{\"notify_props\":{\"channel\":false}}}", "json: cannot unmarshal bool into Go struct field UserNotifyPropsImportData.user.notify_props.channel of type string"),
-            ("{\"type\":\"user\",\"user\":{\"profile_image\":7}}", "json: cannot unmarshal number into Go struct field UserImportData.user.Avatar.profile_image of type string"),
+            (
+                "{\"type\":\"scheme\",\"scheme\":{\"default_team_admin_role\":{\"name\":3}}}",
+                "json: cannot unmarshal number into Go struct field RoleImportData.scheme.default_team_admin_role.name of type string",
+            ),
+            (
+                "{\"type\":\"post\",\"post\":{\"replies\":[{\"attachments\":[{\"path\":2}]}]}}",
+                "json: cannot unmarshal number into Go struct field AttachmentImportData.post.replies.attachments.path of type string",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"notify_props\":{\"channel\":false}}}",
+                "json: cannot unmarshal bool into Go struct field UserNotifyPropsImportData.user.notify_props.channel of type string",
+            ),
+            (
+                "{\"type\":\"user\",\"user\":{\"profile_image\":7}}",
+                "json: cannot unmarshal number into Go struct field UserImportData.user.Avatar.profile_image of type string",
+            ),
             ("{\"type\":\"version\",\"version\":1,\"info\":{\"additional\":5}}", ""),
         ];
         for (line, want) in cases {
             let got = decode_line(line.as_bytes()).err().unwrap_or_default();
             assert_eq!(&got, want, "{line}");
         }
-        let l = decode_line(br#"{"Type":"user","User":{"Username":"a","Teams":[{"NAME":"t","Channels":[{"Favorite":true}]}]}}"#).unwrap();
+        let l = decode_line(
+            br#"{"Type":"user","User":{"Username":"a","Teams":[{"NAME":"t","Channels":[{"Favorite":true}]}]}}"#,
+        )
+        .unwrap();
         let u = l.user.unwrap();
         assert_eq!((l.r#type.as_str(), u.username.as_deref()), ("user", Some("a")));
         assert_eq!(u.teams.unwrap()[0].channels.as_ref().unwrap()[0].favorite, Some(true));
@@ -2254,5 +2415,4 @@ mod tests {
         assert_eq!((e.name.as_deref(), e.image.as_deref()), (Some("x"), Some("y")));
         assert!(decode_line(br#"{"type":"emoji","emoji":{"name":"x"},"emoji":null}"#).unwrap().emoji.is_none());
     }
-
 }

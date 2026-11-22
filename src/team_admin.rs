@@ -9,10 +9,10 @@
 
 use std::collections::HashMap;
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::multipart::MultipartRejection;
 use axum::extract::{Multipart, Path, State as St};
-use crate::app::Query;
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post, put};
@@ -64,8 +64,23 @@ pub fn routes() -> Router<State> {
 // ---------- the model (public/model/team.go) ----------
 
 const RESERVED_NAMES: [&str; 17] = [
-    "admin", "api", "channel", "claim", "error", "files", "help", "landing", "login", "mfa", "oauth", "plug",
-    "plugins", "post", "signup", "boards", "playbooks",
+    "admin",
+    "api",
+    "channel",
+    "claim",
+    "error",
+    "files",
+    "help",
+    "landing",
+    "login",
+    "mfa",
+    "oauth",
+    "plug",
+    "plugins",
+    "post",
+    "signup",
+    "boards",
+    "playbooks",
 ];
 
 fn bad(id: &str) -> AppError {
@@ -276,14 +291,24 @@ impl App {
         }
         for name in self.default_channel_names() {
             let display = match name.as_str() {
-                "town-square" => crate::i18n::t("api.channel.create_default_channels.town_square").unwrap_or("Town Square"),
+                "town-square" => {
+                    crate::i18n::t("api.channel.create_default_channels.town_square").unwrap_or("Town Square")
+                }
                 "off-topic" => crate::i18n::t("api.channel.create_default_channels.off_topic").unwrap_or("Off-Topic"),
                 n => n,
             }
             .to_string();
-            let mut c = Channel { display_name: display, name, r#type: "O".into(), team_id: t.id.clone(), ..Default::default() };
+            let mut c = Channel {
+                display_name: display,
+                name,
+                r#type: "O".into(),
+                team_id: t.id.clone(),
+                ..Default::default()
+            };
             if let Err(existing) = self.save_channel(&mut c, true).await? {
-                return Err(bad("store.sql_channel.save_channel.exists.app_error").detail(format!("id={}", existing.id)));
+                return Err(
+                    bad("store.sql_channel.save_channel.exists.app_error").detail(format!("id={}", existing.id))
+                );
             }
         }
         Ok(())
@@ -331,9 +356,10 @@ impl App {
             .await?;
         }
         if self.cfg.bool("ServiceSettings.ExperimentalEnableDefaultChannelLeaveJoinMessages") {
-            let c = self.channel_by_name(&team.id, "town-square", false, false).await?.ok_or_else(|| {
-                AppError::not_found("app.channel.get_by_name.missing.app_error", "")
-            })?;
+            let c = self
+                .channel_by_name(&team.id, "town-square", false, false)
+                .await?
+                .ok_or_else(|| AppError::not_found("app.channel.get_by_name.missing.app_error", ""))?;
             let (kind, key) = if requestor == user.id {
                 (crate::model::post::kind::LEAVE_TEAM, "api.team.leave.left")
             } else {
@@ -357,7 +383,11 @@ impl App {
         let mut omit = std::collections::BTreeMap::new();
         omit.insert(user.id.clone(), true);
         let data = json!({"user_id": user.id, "team_id": team.id});
-        self.hub.publish("leave_team", data.clone(), Broadcast { team_id: team.id.clone(), omit_users: Some(omit), ..Default::default() });
+        self.hub.publish(
+            "leave_team",
+            data.clone(),
+            Broadcast { team_id: team.id.clone(), omit_users: Some(omit), ..Default::default() },
+        );
         self.hub.publish("leave_team", data, Broadcast { user_id: user.id.clone(), ..Default::default() });
         sqlx::query(
             "UPDATE TeamMembers SET Roles = '', DeleteAt = $3, SchemeGuest = $4, SchemeUser = $5, SchemeAdmin = $6
@@ -440,7 +470,12 @@ async fn create_team(St(app): St<State>, Auth(s): Auth, body: Bytes) -> ApiResul
 }
 
 /// `updateTeam`: the editable fields of the body over the stored team (`UpdateTeam` with `Sanitized`).
-async fn update_team(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>, body: Bytes) -> ApiResult<Json<Team>> {
+async fn update_team(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Team>> {
     require_team_id(&team_id)?;
     let mut team: Team = decode(&body, "team")?;
     team.email = team.email.to_lowercase();
@@ -458,7 +493,8 @@ async fn update_team(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<Stri
     app.check_valid_domains(&team)?;
     if !team.name.is_empty() && team.name != stored.name && team.name != "-" {
         if db::one::<Team>(&app.db, "name = $1", &team.name).await?.is_some() {
-            return Err(bad("app.team.rename_team.name_occupied").detail(format!("team with name {} already exists", team.name)));
+            return Err(bad("app.team.rename_team.name_occupied")
+                .detail(format!("team with name {} already exists", team.name)));
         }
         stored.name = team.name;
     }
@@ -477,7 +513,12 @@ async fn update_team(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<Stri
 
 /// `patchTeam`. Making a team group-constrained does not drop the members outside its groups here: groups need
 /// a license this server does not have.
-async fn patch_team(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>, body: Bytes) -> ApiResult<Json<Team>> {
+async fn patch_team(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Team>> {
     require_team_id(&team_id)?;
     let patch: TeamPatch = decode(&body, "team")?;
     app.require_team(&s, &team_id, perm::MANAGE_TEAM).await?;
@@ -520,7 +561,12 @@ async fn patch_team(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<Strin
 }
 
 /// `updateTeamPrivacy`: `O` opens the team, `I` makes it invite only (with a new invite id).
-async fn update_privacy(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>, body: Bytes) -> ApiResult<Json<Team>> {
+async fn update_privacy(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Team>> {
     require_team_id(&team_id)?;
     let props: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
     let privacy = props.get("privacy").and_then(Value::as_str).ok_or_else(|| AppError::invalid_param("privacy"))?;
@@ -662,10 +708,11 @@ async fn set_icon(
         Some(h) if max_res <= 0 || (h.width as i64) * (h.height as i64) <= max_res => {}
         _ => return Err(bad("api.team.set_team_icon.check_image_limits.app_error")),
     }
-    let (img, _) = crate::images::decode_upright(&data).ok_or_else(|| bad("api.team.set_team_icon.decode.app_error"))?;
+    let (img, _) =
+        crate::images::decode_upright(&data).ok_or_else(|| bad("api.team.set_team_icon.decode.app_error"))?;
     let img = img.resize_to_fill(128, 128, image::imageops::FilterType::Lanczos3);
-    let png = crate::images::png(&img)
-        .ok_or_else(|| AppError::internal("api.team.set_team_icon.encode.app_error", "png"))?;
+    let png =
+        crate::images::png(&img).ok_or_else(|| AppError::internal("api.team.set_team_icon.encode.app_error", "png"))?;
     app.files
         .write(&format!("teams/{}/teamIcon.png", team.id), png.into())
         .await
@@ -797,7 +844,10 @@ async fn update_member_scheme_roles(
     let r: SchemeRoles = decode(&body, "scheme_roles")?;
     app.require_team(&s, &team_id, "manage_team_roles").await?;
     let m = app.team_member(&team_id, &user_id).await?.ok_or_else(|| {
-        AppError::not_found("app.team.get_member.missing.app_error", "No team member found for that user ID and team ID.")
+        AppError::not_found(
+            "app.team.get_member.missing.app_error",
+            "No team member found for that user ID and team ID.",
+        )
     })?;
     if m.scheme_guest {
         return Err(bad("api.team.update_team_member_roles.guest.app_error"));
@@ -808,15 +858,17 @@ async fn update_member_scheme_roles(
     if !r.scheme_user {
         return Err(bad("api.team.update_team_member_roles.unset_user_scheme.app_error"));
     }
-    sqlx::query("UPDATE TeamMembers SET SchemeGuest = $3, SchemeUser = $4, SchemeAdmin = $5 WHERE TeamId = $1 AND UserId = $2")
-        .bind(&team_id)
-        .bind(&user_id)
-        .bind(r.scheme_guest)
-        .bind(r.scheme_user)
-        .bind(r.scheme_admin)
-        .execute(&app.db)
-        .await
-        .map_err(|e| AppError::internal("app.team.save_member.save.app_error", e.to_string()))?;
+    sqlx::query(
+        "UPDATE TeamMembers SET SchemeGuest = $3, SchemeUser = $4, SchemeAdmin = $5 WHERE TeamId = $1 AND UserId = $2",
+    )
+    .bind(&team_id)
+    .bind(&user_id)
+    .bind(r.scheme_guest)
+    .bind(r.scheme_user)
+    .bind(r.scheme_admin)
+    .execute(&app.db)
+    .await
+    .map_err(|e| AppError::internal("app.team.save_member.save.app_error", e.to_string()))?;
     app.clear_sessions_for_user(&user_id);
     if let Some(m) = app.team_member(&team_id, &user_id).await? {
         app.hub.publish(
@@ -915,14 +967,22 @@ async fn search_teams(St(app): St<State>, BusyAuth(s): BusyAuth, body: Bytes) ->
         search_teams_sql(&app, &o, None, paged).await?
     } else if private {
         if o.page.is_some() || o.per_page.is_some() {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.team.search_teams.pagination_not_implemented.private_team_search", ""));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.team.search_teams.pagination_not_implemented.private_team_search",
+                "",
+            ));
         }
         o.allow_open_invite = Some(false);
         o.group_constrained = None;
         search_teams_sql(&app, &o, None, false).await?
     } else if public {
         if o.page.is_some() || o.per_page.is_some() {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.team.search_teams.pagination_not_implemented.public_team_search", ""));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.team.search_teams.pagination_not_implemented.public_team_search",
+                "",
+            ));
         }
         o.allow_open_invite = Some(true);
         o.group_constrained = None;
@@ -1090,16 +1150,26 @@ async fn invite_guests(Auth(_): Auth) -> AppError {
 }
 
 /// `getTeamAccessControlPolicy` without attribute-based access control: no policy.
-async fn access_control_policy(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>) -> ApiResult<Json<Value>> {
+async fn access_control_policy(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+) -> ApiResult<Json<Value>> {
     require_team_id(&team_id)?;
-    if !app.has_perm(&s, perm::MANAGE_SYSTEM).await && !app.has_team_perm(&s, &team_id, "manage_team_access_rules").await {
+    if !app.has_perm(&s, perm::MANAGE_SYSTEM).await
+        && !app.has_team_perm(&s, &team_id, "manage_team_access_rules").await
+    {
         return Err(AppError::forbidden_perm("manage_team_access_rules"));
     }
     Ok(Json(json!({"policy": null, "enforced": false})))
 }
 
 /// `getTeamAccessControlAttributes`: no access control service on this server.
-async fn access_control_attributes(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>) -> ApiResult<Json<Value>> {
+async fn access_control_attributes(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+) -> ApiResult<Json<Value>> {
     require_team_id(&team_id)?;
     app.require_team(&s, &team_id, perm::VIEW_TEAM).await?;
     Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "app.pap.get_channel_access_control_attributes.app_error", ""))
@@ -1178,7 +1248,11 @@ async fn private_channels(
 
 /// `getRecommendedChannelsForTeam`: recommendations come from attribute-based access control, which needs a
 /// license; none.
-async fn recommended_channels(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<String>) -> ApiResult<Json<Vec<Channel>>> {
+async fn recommended_channels(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(team_id): Path<String>,
+) -> ApiResult<Json<Vec<Channel>>> {
     require_team_id(&team_id)?;
     app.require_team(&s, &team_id, perm::LIST_TEAM_CHANNELS).await?;
     Ok(Json(vec![]))
@@ -1213,7 +1287,10 @@ async fn search_channels(
     let member_only = !app.has_team_perm(&s, &team_id, perm::LIST_TEAM_CHANNELS).await;
     if member_only {
         app.team_member(&team_id, &s.user_id).await?.ok_or_else(|| {
-            AppError::not_found("app.team.get_member.missing.app_error", "No team member found for that user ID and team ID.")
+            AppError::not_found(
+                "app.team.get_member.missing.app_error",
+                "No team member found for that user ID and team ID.",
+            )
         })?;
         sql += " JOIN ChannelMembers cm ON (c.Id = cm.ChannelId) WHERE c.TeamId = $1 AND cm.UserId = $2";
     } else {
@@ -1228,7 +1305,8 @@ async fn search_channels(
     if let Some(l) = &like {
         q = q.bind(l).bind(crate::channels::fulltext_term(term));
     }
-    let list = q.fetch_all(&app.db).await.map_err(|e| AppError::internal("app.channel.search.app_error", e.to_string()))?;
+    let list =
+        q.fetch_all(&app.db).await.map_err(|e| AppError::internal("app.channel.search.app_error", e.to_string()))?;
     Ok(Json(list))
 }
 

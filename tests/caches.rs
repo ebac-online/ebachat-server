@@ -44,7 +44,10 @@ async fn last_posts_cache() {
     app.get_posts_cached(&o).await.unwrap();
     assert_eq!(hits(&app, "last_posts"), h + 1, "the first page comes from the cache");
     let p = app
-        .create_post(Post { channel_id: channel_id.clone(), user_id, message: "last posts cache".into(), ..Default::default() }, false)
+        .create_post(
+            Post { channel_id: channel_id.clone(), user_id, message: "last posts cache".into(), ..Default::default() },
+            false,
+        )
         .await
         .unwrap();
     let l = app.get_posts_cached(&o).await.unwrap();
@@ -114,7 +117,12 @@ async fn team_ids_cache_in_view_restrictions() {
     let r2 = app.view_restrictions(&user_id).await;
     let hit = hits(&app, "team_ids_for_user") == h + 1;
     // Leaving the stand as it was.
-    sqlx::query("UPDATE Users SET Roles = $2 WHERE Id = $1").bind(&user_id).bind(&roles).execute(&app.db).await.unwrap();
+    sqlx::query("UPDATE Users SET Roles = $2 WHERE Id = $1")
+        .bind(&user_id)
+        .bind(&roles)
+        .execute(&app.db)
+        .await
+        .unwrap();
     app.invalidate_user(&user_id);
     let r = r.unwrap().expect("restricted");
     assert!(!r.channels.is_empty(), "the channels they are in");

@@ -313,8 +313,10 @@ pub fn html_escape(s: &str) -> String {
 fn url_normalize(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for b in s.bytes() {
-        let keep = matches!(b, b'!' | b'#' | b'$' | b'&' | b'*' | b'+' | b',' | b'/' | b':' | b';' | b'=' | b'?' | b'@' | b'[' | b']')
-            || matches!(b, b'-' | b'.' | b'_' | b'~' | b'%')
+        let keep = matches!(
+            b,
+            b'!' | b'#' | b'$' | b'&' | b'*' | b'+' | b',' | b'/' | b':' | b';' | b'=' | b'?' | b'@' | b'[' | b']'
+        ) || matches!(b, b'-' | b'.' | b'_' | b'~' | b'%')
             || b.is_ascii_alphanumeric();
         if keep {
             o.push(b as char);
@@ -339,8 +341,26 @@ fn safe_url(s: &str) -> bool {
 /// `cssValueFilter`, for the values the templates hold (colors).
 fn css_value(s: &str) -> String {
     let lower = s.to_ascii_lowercase();
-    let bad = s.bytes().any(|b| matches!(b, 0 | b'"' | b'\'' | b'(' | b')' | b'/' | b';' | b'@' | b'[' | b'\\' | b']' | b'`' | b'{' | b'}' | b'<' | b'>'))
-        || lower.contains("expression")
+    let bad = s.bytes().any(|b| {
+        matches!(
+            b,
+            0 | b'"'
+                | b'\''
+                | b'('
+                | b')'
+                | b'/'
+                | b';'
+                | b'@'
+                | b'['
+                | b'\\'
+                | b']'
+                | b'`'
+                | b'{'
+                | b'}'
+                | b'<'
+                | b'>'
+        )
+    }) || lower.contains("expression")
         || lower.contains("mozbinding");
     if bad { "ZgotmplZ".into() } else { s.to_string() }
 }

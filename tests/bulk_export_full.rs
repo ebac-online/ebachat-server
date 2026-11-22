@@ -15,11 +15,20 @@ async fn full_export() {
     let mut cfg = Config::load().await.unwrap();
     let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| db_url(cfg.str("SqlSettings.DataSource")));
     let db = sqlx::PgPool::connect(&url).await.unwrap();
-    cfg.diagnostic_id =
-        sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'DiagnosticId'").fetch_optional(&db).await.unwrap().unwrap_or_default();
+    cfg.diagnostic_id = sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'DiagnosticId'")
+        .fetch_optional(&db)
+        .await
+        .unwrap()
+        .unwrap_or_default();
     let app = App::new(db, cfg).unwrap();
     let mut job = Job { id: ebachat_server::app::new_id(), r#type: "export_process".into(), ..Default::default() };
     let t = std::time::Instant::now();
     ebachat_server::bulk_export::export_job(&app, &mut job).await.unwrap();
-    println!("{}/{}_export.zip in {:?}, data {:?}", app.cfg.str("ExportSettings.Directory"), job.id, t.elapsed(), job.data);
+    println!(
+        "{}/{}_export.zip in {:?}, data {:?}",
+        app.cfg.str("ExportSettings.Directory"),
+        job.id,
+        t.elapsed(),
+        job.data
+    );
 }

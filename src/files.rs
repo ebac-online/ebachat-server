@@ -50,12 +50,11 @@ impl FileStore {
         self.local.as_ref().map(|d| d.join(clean(p)))
     }
 
+    /// The object's path with its name as given (`Path::from` would percent-encode non-ASCII, `%`, `#` and more).
     fn path(&self, p: &str) -> Path {
-        if self.prefix.is_empty() {
-            Path::from(p)
-        } else {
-            Path::from(format!("{}/{p}", self.prefix.trim_end_matches('/')))
-        }
+        let full =
+            if self.prefix.is_empty() { p.to_string() } else { format!("{}/{p}", self.prefix.trim_end_matches('/')) };
+        Path::parse(&full).unwrap_or_else(|_| Path::from(full))
     }
 
     pub async fn read(&self, p: &str) -> anyhow::Result<Bytes> {
@@ -172,4 +171,22 @@ pub fn clean(p: &str) -> String {
         }
     }
     parts.join("/")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn names_stay_as_given_on_disk() {
+        let dir = std::env::temp_dir().join(crate::app::new_id());
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = object_store::local::LocalFileSystem::new_with_prefix(&dir).unwrap();
+        let fs = FileStore { store: Arc::new(store), prefix: String::new(), local: Some(dir.clone()) };
+        let name = "тест файл 100%41 #x+[a].txt";
+        fs.write(&format!("a/{name}"), Bytes::from_static(b"hi")).await.unwrap();
+        assert!(dir.join("a").join(name).exists());
+        assert_eq!(fs.read(&format!("a/{name}")).await.unwrap(), Bytes::from_static(b"hi"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

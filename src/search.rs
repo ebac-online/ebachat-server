@@ -27,7 +27,6 @@ pub fn routes() -> Router<State> {
         .route("/api/v4/teams/{team_id}/posts/search", post(search_team))
 }
 
-
 /// Go's default `per_page` for post search.
 const SEARCH_PER_PAGE: i64 = 60;
 /// The most posts one search page answers.
@@ -237,9 +236,11 @@ fn neutralize_hyphens(s: &str) -> String {
     let word = |c: char| c.is_alphanumeric();
     c.iter()
         .enumerate()
-        .map(|(i, &ch)| {
-            if ch == '-' && !(i > 0 && word(c[i - 1]) && i + 1 < c.len() && word(c[i + 1])) { ' ' } else { ch }
-        })
+        .map(
+            |(i, &ch)| {
+                if ch == '-' && !(i > 0 && word(c[i - 1]) && i + 1 < c.len() && word(c[i + 1])) { ' ' } else { ch }
+            },
+        )
         .collect()
 }
 
@@ -323,7 +324,8 @@ impl App {
             conds.push(format!("q2.CreateAt BETWEEN {a} AND {b}"));
         } else {
             if !p.excluded_date.is_empty() {
-                let (a, b) = parse_day(&p.excluded_date).map(|d| (start_of_day(d, tz), end_of_day(d, tz))).unwrap_or((0, 0));
+                let (a, b) =
+                    parse_day(&p.excluded_date).map(|d| (start_of_day(d, tz), end_of_day(d, tz))).unwrap_or((0, 0));
                 conds.push(format!("q2.CreateAt NOT BETWEEN {a} AND {b}"));
             }
             if !p.after_date.is_empty() {
@@ -370,13 +372,16 @@ impl App {
             }
             // Go runs each set as its own query and a set whose query fails (a tsquery Postgres rejects, as `-#tag`
             // alone gives) logs it and finds nothing, the other sets still do: here the set's group is dropped.
-            if let Err(e) = sqlx::query("SELECT to_tsquery('english', $1)").bind(&q).execute(&self.db).await {
+            // The database's default_text_search_config, which its full-text indexes are built with.
+            let cfg = crate::file_api::text_search_config(self).await;
+            let check = format!("SELECT to_tsquery('{cfg}', $1)");
+            if let Err(e) = sqlx::query(sqlx::AssertSqlSafe(check)).bind(&q).execute(&self.db).await {
                 eprintln!("query error searching posts: {e}");
                 binds.truncate(first);
                 return Ok(None);
             }
             let q = put(Bind::Text(q), binds);
-            conds.push(format!("to_tsvector('english', q2.{search_type}) @@ to_tsquery('english', {q})"));
+            conds.push(format!("to_tsvector('{cfg}', q2.{search_type}) @@ to_tsquery('{cfg}', {q})"));
         }
         if p.is_hashtag {
             // Go keeps a post only if one of its hashtags is one of the terms, case-insensitively (strings.ToUpper);
@@ -401,7 +406,8 @@ impl App {
         p: &Params,
         allowed: &mut HashMap<String, bool>,
     ) -> ApiResult<Vec<String>> {
-        let mut sql = "SELECT Id FROM Channels, ChannelMembers WHERE Id = ChannelId AND ChannelMembers.UserId = $1".to_string();
+        let mut sql =
+            "SELECT Id FROM Channels, ChannelMembers WHERE Id = ChannelId AND ChannelMembers.UserId = $1".to_string();
         let mut n = 1;
         if !p.include_deleted_channels {
             sql += " AND Channels.DeleteAt = 0";
@@ -454,7 +460,11 @@ impl App {
         let terms = b.terms.unwrap_or_default();
         let params = parse(terms.trim(), b.time_zone_offset.unwrap_or(0));
         if !self.cfg.bool("ServiceSettings.EnablePostSearch") {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "store.sql_post.search.disabled", "Searching has been disabled on this server."));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "store.sql_post.search.disabled",
+                "Searching has been disabled on this server.",
+            ));
         }
         let mut list = PostList::default();
         // Pages for real, unlike Go's database search (LIMIT 100 whatever per_page asks, and nothing at all past
@@ -482,8 +492,10 @@ impl App {
             }
             p.or_terms = b.is_or_search.unwrap_or(false);
             p.include_deleted_channels = b.include_deleted_channels.unwrap_or(false);
-            p.in_channels = self.channel_names_to_ids(&p.in_channels, &s.user_id, team_id, p.include_deleted_channels).await;
-            p.excluded_channels = self.channel_names_to_ids(&p.excluded_channels, &s.user_id, team_id, p.include_deleted_channels).await;
+            p.in_channels =
+                self.channel_names_to_ids(&p.in_channels, &s.user_id, team_id, p.include_deleted_channels).await;
+            p.excluded_channels =
+                self.channel_names_to_ids(&p.excluded_channels, &s.user_id, team_id, p.include_deleted_channels).await;
             p.from_users = self.usernames_to_ids(&p.from_users).await;
             p.excluded_users = self.usernames_to_ids(&p.excluded_users).await;
             p.terms = drop_symbol_terms(&p.terms);
@@ -530,7 +542,13 @@ impl App {
     }
 
     /// `convertChannelNamesToChannelIds`: `~name`, `@user` (an existing direct channel), or as given.
-    async fn channel_names_to_ids(&self, names: &[String], user_id: &str, team_id: &str, include_deleted: bool) -> Vec<String> {
+    async fn channel_names_to_ids(
+        &self,
+        names: &[String],
+        user_id: &str,
+        team_id: &str,
+        include_deleted: bool,
+    ) -> Vec<String> {
         let mut out = vec![];
         for n in names {
             let clean = n.trim_start_matches('~');
@@ -538,8 +556,12 @@ impl App {
                 if u.contains(',') {
                     None
                 } else {
-                    let other: Option<String> =
-                        sqlx::query_scalar("SELECT Id FROM Users WHERE Username = $1").bind(u).fetch_optional(&self.db).await.ok().flatten();
+                    let other: Option<String> = sqlx::query_scalar("SELECT Id FROM Users WHERE Username = $1")
+                        .bind(u)
+                        .fetch_optional(&self.db)
+                        .await
+                        .ok()
+                        .flatten();
                     match other {
                         Some(o) => sqlx::query_scalar("SELECT Id FROM Channels WHERE Name = $1 AND Type = 'D'")
                             .bind(crate::model::channel::direct_name(user_id, &o))
@@ -552,13 +574,15 @@ impl App {
                 }
             } else {
                 let del = if include_deleted { "" } else { " AND DeleteAt = 0" };
-                sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT Id FROM Channels WHERE Name = $1 AND (TeamId = $2 OR TeamId = ''){del}")))
-                    .bind(clean)
-                    .bind(team_id)
-                    .fetch_optional(&self.db)
-                    .await
-                    .ok()
-                    .flatten()
+                sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                    "SELECT Id FROM Channels WHERE Name = $1 AND (TeamId = $2 OR TeamId = ''){del}"
+                )))
+                .bind(clean)
+                .bind(team_id)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten()
             };
             out.push(id.unwrap_or_else(|| n.clone()));
         }
@@ -569,8 +593,12 @@ impl App {
         let mut out = vec![];
         for n in names {
             let u = n.trim_start_matches('@').to_lowercase();
-            let id: Option<String> =
-                sqlx::query_scalar("SELECT Id FROM Users WHERE Username = $1").bind(&u).fetch_optional(&self.db).await.ok().flatten();
+            let id: Option<String> = sqlx::query_scalar("SELECT Id FROM Users WHERE Username = $1")
+                .bind(&u)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten();
             out.push(id.unwrap_or_else(|| n.clone()));
         }
         out
@@ -598,7 +626,8 @@ async fn search(app: &State, s: &Session, team_id: &str, b: SearchBody) -> ApiRe
 
 fn body(raw: &[u8]) -> ApiResult<SearchBody> {
     serde_json::from_slice(raw).map_err(|e| {
-        AppError::bad_request("api.post.search_posts.invalid_body.app_error", "Unable to parse the body.").detail(e.to_string())
+        AppError::bad_request("api.post.search_posts.invalid_body.app_error", "Unable to parse the body.")
+            .detail(e.to_string())
     })
 }
 
@@ -606,7 +635,12 @@ async fn search_all(St(app): St<State>, BusyAuth(s): BusyAuth, raw: axum::body::
     search(&app, &s, "", body(&raw)?).await
 }
 
-async fn search_team(St(app): St<State>, BusyAuth(s): BusyAuth, Path(team_id): Path<String>, raw: axum::body::Bytes) -> ApiResult<Response> {
+async fn search_team(
+    St(app): St<State>,
+    BusyAuth(s): BusyAuth,
+    Path(team_id): Path<String>,
+    raw: axum::body::Bytes,
+) -> ApiResult<Response> {
     if !is_valid_id(&team_id) {
         return Err(AppError::invalid_url_param("team_id"));
     }

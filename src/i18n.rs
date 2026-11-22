@@ -94,8 +94,10 @@ fn load_locale(json: &str) -> Locale {
                 l.plain.insert(e.id, s);
             }
             serde_json::Value::Object(m) => {
-                let forms: HashMap<String, String> =
-                    m.into_iter().filter_map(|(k, v)| Some((k, v.as_str().filter(|s| !s.is_empty())?.to_string()))).collect();
+                let forms: HashMap<String, String> = m
+                    .into_iter()
+                    .filter_map(|(k, v)| Some((k, v.as_str().filter(|s| !s.is_empty())?.to_string())))
+                    .collect();
                 if !forms.is_empty() {
                     l.plural.insert(e.id, forms);
                 }
@@ -117,8 +119,8 @@ fn locale(name: &str) -> Option<&'static Locale> {
     use std::sync::Mutex;
     static ALL: OnceLock<Mutex<HashMap<String, &'static Locale>>> = OnceLock::new();
     const SUPPORTED: &[&str] = &[
-        "de", "en", "en-AU", "es", "fr", "it", "hu", "nl", "pl", "pt-BR", "ro", "sv", "vi", "tr", "bg", "ru", "uk", "fa",
-        "ko", "zh-CN", "zh-TW", "ja", "da", "cs", "hr", "lt", "nb-NO", "pt", "fi",
+        "de", "en", "en-AU", "es", "fr", "it", "hu", "nl", "pl", "pt-BR", "ro", "sv", "vi", "tr", "bg", "ru", "uk",
+        "fa", "ko", "zh-CN", "zh-TW", "ja", "da", "cs", "hr", "lt", "nb-NO", "pt", "fi",
     ];
     if !SUPPORTED.contains(&name) {
         return None;
@@ -187,8 +189,10 @@ fn plural_category(lang: &str, n: i64) -> &'static str {
 fn fill(s: String, args: &[(&str, &str)]) -> String {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
     let re = RE.get_or_init(|| regex::Regex::new(r"\{\{-?\s*\.(\w+)\s*-?\}\}").unwrap());
-    re.replace_all(&s, |c: &regex::Captures| args.iter().find(|(k, _)| *k == &c[1]).map(|(_, v)| v.to_string()).unwrap_or_else(|| "<no value>".into()))
-        .into_owned()
+    re.replace_all(&s, |c: &regex::Captures| {
+        args.iter().find(|(k, _)| *k == &c[1]).map(|(_, v)| v.to_string()).unwrap_or_else(|| "<no value>".into())
+    })
+    .into_owned()
 }
 
 /// `i18n.GetUserTranslations(locale)(id, args)`: the user's locale (English when the server does not have it),
@@ -217,7 +221,10 @@ pub fn tl(locale_name: &str, id: &str, args: &[(&str, &str)]) -> String {
 mod tests {
     #[test]
     fn looks_up_by_id() {
-        assert_eq!(super::t("api.context.session_expired.app_error"), Some("Invalid or expired session, please login again."));
+        assert_eq!(
+            super::t("api.context.session_expired.app_error"),
+            Some("Invalid or expired session, please login again.")
+        );
         assert!(super::tr("api.context.invalid_body_param.app_error", &[("Name", "x")]).unwrap().contains(" x "));
     }
 
@@ -225,7 +232,8 @@ mod tests {
     fn user_locales_and_plurals() {
         assert_eq!(super::tl("xx", "January", &[]), "January");
         assert_eq!(super::tl("en", "no.such.id", &[]), "no.such.id");
-        let one = super::tl("en", "api.post.get_message_for_notification.images_sent", &[("Count", "1"), ("Filenames", "a")]);
+        let one =
+            super::tl("en", "api.post.get_message_for_notification.images_sent", &[("Count", "1"), ("Filenames", "a")]);
         assert_eq!(one, "1 image sent: a");
         assert_eq!(super::plural_category("ru", 5), "many");
         assert_eq!(super::plural_category("ru", 22), "few");
@@ -242,11 +250,16 @@ mod tests {
         );
         let de = super::tl("de", "api.bot.teams_channels.add_message_mobile", &[]);
         assert!(de.contains("die Desktop-App") && !de.contains("Mattermost"), "{de}");
-        let msg = super::tr("api.upgrade_to_enterprise.invalid-user.app_error", &[("MattermostUsername", "mm"), ("Path", "/p")]).unwrap();
+        let msg = super::tr(
+            "api.upgrade_to_enterprise.invalid-user.app_error",
+            &[("MattermostUsername", "mm"), ("Path", "/p")],
+        )
+        .unwrap();
         assert!(msg.starts_with(&format!("{name} was unable")) && msg.contains("system user mm "), "{msg}");
         for f in std::fs::read_dir("i18n").unwrap() {
             let path = f.unwrap().path();
-            let entries: Vec<serde_json::Value> = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            let entries: Vec<serde_json::Value> =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
             for e in entries {
                 let id = e["id"].as_str().unwrap();
                 let texts: Vec<&str> = match &e["translation"] {

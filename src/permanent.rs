@@ -88,8 +88,10 @@ impl App {
     /// `SqlReactionStore.PermanentDeleteByUser`: the user's reactions, and `HasReactions` of their posts again.
     async fn delete_reactions_by_user(&self, user_id: &str) -> Result<(), sqlx::Error> {
         let mut tx = self.db.begin().await?;
-        let posts: Vec<String> =
-            sqlx::query_scalar("SELECT PostId FROM Reactions WHERE UserId = $1").bind(user_id).fetch_all(&mut *tx).await?;
+        let posts: Vec<String> = sqlx::query_scalar("SELECT PostId FROM Reactions WHERE UserId = $1")
+            .bind(user_id)
+            .fetch_all(&mut *tx)
+            .await?;
         sqlx::query("DELETE FROM Reactions WHERE PostId = ANY($1) AND UserId = $2")
             .bind(&posts)
             .bind(user_id)
@@ -152,8 +154,14 @@ impl App {
         tx.commit().await.map_err(internal("app.user_access_token.delete.app_error"))?;
         for (sql, err) in [
             ("DELETE FROM OAuthAccessData WHERE UserId = $1", "app.oauth.permanent_delete_auth_data_by_user.app_error"),
-            ("DELETE FROM IncomingWebhooks WHERE UserId = $1", "app.webhooks.permanent_delete_incoming_by_user.app_error"),
-            ("DELETE FROM OutgoingWebhooks WHERE CreatorId = $1", "app.webhooks.permanent_delete_outgoing_by_user.app_error"),
+            (
+                "DELETE FROM IncomingWebhooks WHERE UserId = $1",
+                "app.webhooks.permanent_delete_incoming_by_user.app_error",
+            ),
+            (
+                "DELETE FROM OutgoingWebhooks WHERE CreatorId = $1",
+                "app.webhooks.permanent_delete_outgoing_by_user.app_error",
+            ),
             ("DELETE FROM Commands WHERE CreatorId = $1", "app.user.permanentdeleteuser.internal_error"),
             ("DELETE FROM Preferences WHERE UserId = $1", "app.preference.permanent_delete_by_user.app_error"),
             ("DELETE FROM ChannelMembers WHERE UserId = $1", "app.channel.permanent_delete_members_by_user.app_error"),
@@ -162,7 +170,9 @@ impl App {
             sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&id).execute(db).await.map_err(internal(err))?;
         }
         self.delete_posts_by_user(&id).await.map_err(internal("app.post.permanent_delete_by_user.app_error"))?;
-        self.delete_reactions_by_user(&id).await.map_err(internal("app.reaction.permanent_delete_by_user.app_error"))?;
+        self.delete_reactions_by_user(&id)
+            .await
+            .map_err(internal("app.reaction.permanent_delete_by_user.app_error"))?;
         sqlx::query("DELETE FROM ScheduledPosts WHERE UserId = $1")
             .bind(&id)
             .execute(db)
@@ -174,7 +184,9 @@ impl App {
             .await
             .map_err(internal("app.drafts.permanent_delete_by_user.app_error"))?;
         sqlx::query("DELETE FROM Bots WHERE UserId = $1").bind(&id).execute(db).await.map_err(|e| {
-            AppError::bad_request("app.bot.permenent_delete.bad_id", "").with_param("user_id", &id).detail(e.to_string())
+            AppError::bad_request("app.bot.permenent_delete.bad_id", "")
+                .with_param("user_id", &id)
+                .detail(e.to_string())
         })?;
         let infos: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT COALESCE(Path, ''), COALESCE(ThumbnailPath, ''), COALESCE(PreviewPath, '') FROM FileInfo \
@@ -213,10 +225,7 @@ impl App {
             return Err(AppError::new(StatusCode::ACCEPTED, "app.file_info.permanent_delete_by_user.app_error", "")
                 .detail("Couldn't delete profile image of the user."));
         }
-        crate::logs::warn(
-            "Permanently deleted account",
-            &[("user_email", email.into()), ("user_id", id.into())],
-        );
+        crate::logs::warn("Permanently deleted account", &[("user_email", email.into()), ("user_id", id.into())]);
         Ok(())
     }
 
@@ -228,12 +237,13 @@ impl App {
             let mut tx = db.begin().await?;
             let mut last = String::new();
             loop {
-                let ids: Vec<String> =
-                    sqlx::query_scalar("SELECT Id FROM Posts WHERE ChannelId = $1 AND Id > $2 ORDER BY Id ASC LIMIT 500")
-                        .bind(&c.id)
-                        .bind(&last)
-                        .fetch_all(&mut *tx)
-                        .await?;
+                let ids: Vec<String> = sqlx::query_scalar(
+                    "SELECT Id FROM Posts WHERE ChannelId = $1 AND Id > $2 ORDER BY Id ASC LIMIT 500",
+                )
+                .bind(&c.id)
+                .bind(&last)
+                .fetch_all(&mut *tx)
+                .await?;
                 let Some(l) = ids.last() else { break };
                 last = l.clone();
                 delete_post_data(&mut tx, &ids, true).await?;
@@ -244,8 +254,14 @@ impl App {
         posts.await.map_err(internal("app.post.permanent_delete_by_channel.app_error"))?;
         for (sql, err) in [
             ("DELETE FROM ChannelMembers WHERE ChannelId = $1", "app.channel.remove_member.app_error"),
-            ("DELETE FROM IncomingWebhooks WHERE ChannelId = $1", "app.webhooks.permanent_delete_incoming_by_channel.app_error"),
-            ("DELETE FROM OutgoingWebhooks WHERE ChannelId = $1", "app.webhooks.permanent_delete_outgoing_by_channel.app_error"),
+            (
+                "DELETE FROM IncomingWebhooks WHERE ChannelId = $1",
+                "app.webhooks.permanent_delete_incoming_by_channel.app_error",
+            ),
+            (
+                "DELETE FROM OutgoingWebhooks WHERE ChannelId = $1",
+                "app.webhooks.permanent_delete_outgoing_by_channel.app_error",
+            ),
         ] {
             sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&c.id).execute(db).await.map_err(internal(err))?;
         }
@@ -303,7 +319,10 @@ impl App {
             tx.commit().await
         };
         if let Err(e) = r.await {
-            crate::logs::warn("Failed to delete ABAC policy during delete", &[("id", id.into()), ("error", e.to_string().into())]);
+            crate::logs::warn(
+                "Failed to delete ABAC policy during delete",
+                &[("id", id.into()), ("error", e.to_string().into())],
+            );
         }
     }
 

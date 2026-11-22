@@ -6,7 +6,11 @@ use ebachat_server::{api, app::App, config::Config, db_url};
 async fn main() -> anyhow::Result<()> {
     let mut cfg = Config::load().await?;
     let url = std::env::var("DATABASE_URL").unwrap_or_else(|_| db_url(cfg.str("SqlSettings.DataSource")));
-    let max: u32 = std::env::var("DB_MAX_CONNECTIONS").ok().and_then(|v| v.parse().ok()).unwrap_or(20);
+    // SqlSettings.MaxOpenConns, unless DB_MAX_CONNECTIONS says otherwise.
+    let max: u32 = std::env::var("DB_MAX_CONNECTIONS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| u32::try_from(cfg.i64("SqlSettings.MaxOpenConns")).ok().filter(|&n| n > 0).unwrap_or(100));
     let db = sqlx::postgres::PgPoolOptions::new()
         .max_connections(max)
         .acquire_timeout(Duration::from_secs(10))
@@ -31,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
     ebachat_server::reminders::spawn(app.clone());
     ebachat_server::job_workers::startup(&app).await;
     ebachat_server::jobs::spawn(app.clone());
+    ebachat_server::plugins::start(app.clone());
     ebachat_server::logs::startup(&app).await;
     let listener = tokio::net::TcpListener::bind(&listen).await?;
     eprintln!("listening on {listen}");

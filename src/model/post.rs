@@ -7,7 +7,7 @@ use ebachat_macros::model;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::{Emoji, FileInfo, Reaction, StringArray, StringInterface, User, is_zero};
+use super::{Emoji, FileIds, FileInfo, Reaction, StringArray, StringInterface, User, is_zero};
 
 #[model(table = "posts")]
 #[derive(Debug, Clone, PartialEq)]
@@ -32,7 +32,7 @@ pub struct Post {
     pub hashtags: String,
     #[mm(skip_json)]
     pub filenames: StringArray,
-    pub file_ids: StringArray,
+    pub file_ids: FileIds,
     #[mm(transient)]
     pub pending_post_id: String,
     #[mm(omitempty)]
@@ -221,6 +221,27 @@ impl Post {
             self.create_at = now;
         }
         self.update_at = self.create_at;
+        let mut seen = std::collections::HashSet::new();
+        let ids = std::mem::take(&mut self.file_ids.0).into_iter().filter(|id| seen.insert(id.clone())).collect();
+        self.file_ids = FileIds(ids, false);
+        self.strip_nul();
+    }
+
+    /// Postgres text and jsonb cannot hold NUL.
+    pub fn strip_nul(&mut self) {
+        self.message.retain(|c| c != '\0');
+        self.hashtags.retain(|c| c != '\0');
+        let props = std::mem::take(&mut self.props.0);
+        self.props.0 = props.into_iter().map(|(k, v)| (k.replace('\0', ""), strip_nul(v))).collect();
+    }
+}
+
+fn strip_nul(v: Value) -> Value {
+    match v {
+        Value::String(s) => Value::String(s.replace('\0', "")),
+        Value::Array(a) => Value::Array(a.into_iter().map(strip_nul).collect()),
+        Value::Object(o) => Value::Object(o.into_iter().map(|(k, v)| (k.replace('\0', ""), strip_nul(v))).collect()),
+        v => v,
     }
 }
 
@@ -388,5 +409,27 @@ fn serialize_participants_opt<S: serde::Serializer>(users: &Option<Vec<User>>, s
     match users {
         Some(u) => serialize_participants(u, s),
         None => s.serialize_none(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pre_save_drops_repeated_file_ids() {
+        let mut p = Post { file_ids: FileIds(vec!["a".into(), "b".into(), "a".into()], true), ..Default::default() };
+        p.pre_save(1);
+        assert_eq!(p.file_ids.0, vec!["a".to_string(), "b".to_string()]);
+        assert!(!p.file_ids.1);
+    }
+
+    #[test]
+    fn nul_stripped() {
+        let mut p = Post { message: "a\0b".into(), hashtags: "#a\0".into(), ..Default::default() };
+        p.props.0.insert("k\0".into(), serde_json::json!({"x": ["y\0"]}));
+        p.strip_nul();
+        assert_eq!((p.message.as_str(), p.hashtags.as_str()), ("ab", "#a"));
+        assert_eq!(p.props.0["k"], serde_json::json!({"x": ["y"]}));
     }
 }

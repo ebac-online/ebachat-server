@@ -29,8 +29,14 @@ async fn snapshot() {
         let stand = std::env::var("DATABASE_URL").unwrap();
         let stand = stand.rsplit('/').next().unwrap().split('?').next().unwrap().to_string();
         let admin = PgPool::connect(&url_for("postgres")).await.unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {SNAP_DB} WITH (FORCE)"))).execute(&admin).await.unwrap();
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {SNAP_DB} TEMPLATE {stand}"))).execute(&admin).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {SNAP_DB} WITH (FORCE)")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE DATABASE {SNAP_DB} TEMPLATE {stand}")))
+            .execute(&admin)
+            .await
+            .unwrap();
     })
     .await;
 }
@@ -42,7 +48,10 @@ async fn fresh(name: &str, template: Option<&str>) -> PgPool {
     snapshot().await;
     let _g = COPY.lock().await;
     let admin = PgPool::connect(&url_for("postgres")).await.unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))).execute(&admin).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
+        .execute(&admin)
+        .await
+        .unwrap();
     let create = match template {
         Some(t) => format!("CREATE DATABASE {name} TEMPLATE {t}"),
         None => format!("CREATE DATABASE {name}"),
@@ -54,7 +63,10 @@ async fn fresh(name: &str, template: Option<&str>) -> PgPool {
 async fn drop_db(pool: PgPool, name: &str) {
     pool.close().await;
     let admin = PgPool::connect(&url_for("postgres")).await.unwrap();
-    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)"))).execute(&admin).await.unwrap();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP DATABASE IF EXISTS {name} WITH (FORCE)")))
+        .execute(&admin)
+        .await
+        .unwrap();
 }
 
 /// What the schema is: columns, indexes, constraints, views, functions and types, as sorted text lines.
@@ -82,7 +94,10 @@ async fn schema(db: &PgPool) -> Vec<String> {
 }
 
 async fn records(db: &PgPool, table: &str) -> Vec<(i64, String)> {
-    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT version, name FROM {table} ORDER BY version, name"))).fetch_all(db).await.unwrap()
+    sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT version, name FROM {table} ORDER BY version, name")))
+        .fetch_all(db)
+        .await
+        .unwrap()
 }
 
 fn ours(files: &[(&str, &str)]) -> Vec<Set> {
@@ -111,7 +126,10 @@ async fn an_empty_database_comes_out_as_go_leaves_it() {
     let got = schema(&db).await;
     let missing: Vec<_> = expected.iter().filter(|r| !got.contains(r)).collect();
     let extra: Vec<_> = got.iter().filter(|r| !expected.contains(r)).collect();
-    assert!(missing.is_empty() && extra.is_empty(), "schema differs from Go's:\n missing {missing:#?}\n extra {extra:#?}");
+    assert!(
+        missing.is_empty() && extra.is_empty(),
+        "schema differs from Go's:\n missing {missing:#?}\n extra {extra:#?}"
+    );
     // The lock row is gone; a second run applies nothing.
     let locks: i64 = sqlx::query_scalar("SELECT count(*) FROM db_lock").fetch_one(&db).await.unwrap();
     assert_eq!(locks, 0);
@@ -130,12 +148,18 @@ async fn our_migrations_are_recorded_apart_and_fail_cleanly() {
             "000001_ebachat_test_concurrently.up.sql",
             "-- morph:nontransactional\nCREATE INDEX CONCURRENTLY IF NOT EXISTS ebachat_test_a ON Posts (UpdateAt, Id);",
         ),
-        ("000002_ebachat_test_two.up.sql", "CREATE INDEX IF NOT EXISTS ebachat_test_b ON Posts (EditAt);\nCOMMENT ON INDEX ebachat_test_b IS 'test';"),
+        (
+            "000002_ebachat_test_two.up.sql",
+            "CREATE INDEX IF NOT EXISTS ebachat_test_b ON Posts (EditAt);\nCOMMENT ON INDEX ebachat_test_b IS 'test';",
+        ),
         ("000002_ebachat_test_two.down.sql", "DROP INDEX IF EXISTS ebachat_test_b;"),
     ];
     migrate::run_sets(&db, &ours(&good), TIMEOUT).await.unwrap();
     let idx: Vec<String> =
-        sqlx::query_scalar("SELECT indexname FROM pg_indexes WHERE indexname LIKE 'ebachat_test_%' ORDER BY 1").fetch_all(&db).await.unwrap();
+        sqlx::query_scalar("SELECT indexname FROM pg_indexes WHERE indexname LIKE 'ebachat_test_%' ORDER BY 1")
+            .fetch_all(&db)
+            .await
+            .unwrap();
     assert_eq!(idx, ["ebachat_test_a", "ebachat_test_b"]);
     assert_eq!(
         records(&db, "ebachat_migrations").await,
@@ -150,11 +174,17 @@ async fn our_migrations_are_recorded_apart_and_fail_cleanly() {
     let bad = [
         good[0],
         good[1],
-        ("000003_ebachat_test_bad.up.sql", "CREATE INDEX ebachat_test_c ON Posts (Type);\nSELECT * FROM no_such_table;"),
+        (
+            "000003_ebachat_test_bad.up.sql",
+            "CREATE INDEX ebachat_test_c ON Posts (Type);\nSELECT * FROM no_such_table;",
+        ),
     ];
     let err = migrate::run_sets(&db, &ours(&bad), TIMEOUT).await.unwrap_err().to_string();
     assert!(err.contains("3 ebachat_test_bad"), "{err}");
-    let c: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_indexes WHERE indexname = 'ebachat_test_c'").fetch_one(&db).await.unwrap();
+    let c: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_indexes WHERE indexname = 'ebachat_test_c'")
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(c, 0, "rolled back");
     assert_eq!(records(&db, "ebachat_migrations").await.len(), 2);
     let t = Instant::now();
@@ -179,7 +209,12 @@ async fn lock_waits_for_a_live_holder_and_takes_over_an_expired_one() {
     migrate::run_sets(&db, &[], TIMEOUT).await.unwrap();
     assert!(t.elapsed() < Duration::from_secs(1), "expired lock taken over at once");
     // A live holder (a Go server migrating) for 3 more seconds: the run waits for it.
-    sqlx::query("INSERT INTO db_lock (id, expireat) VALUES ($1, $2)").bind(migrate::LOCK_KEY).bind(now + 3).execute(&db).await.unwrap();
+    sqlx::query("INSERT INTO db_lock (id, expireat) VALUES ($1, $2)")
+        .bind(migrate::LOCK_KEY)
+        .bind(now + 3)
+        .execute(&db)
+        .await
+        .unwrap();
     let t = Instant::now();
     migrate::run_sets(&db, &[], TIMEOUT).await.unwrap();
     assert!(t.elapsed() >= Duration::from_secs(2), "waited for the holder: {:?}", t.elapsed());
@@ -207,11 +242,15 @@ async fn pre_migration_renumbers_the_v10_11_cherry_picks() {
     migrate::run_sets(&db, &[Set { table: "db_migrations", files }], TIMEOUT).await.unwrap();
     let got = records(&db, "db_migrations").await;
     assert!(!got.iter().any(|(v, _)| (142..=144).contains(v)), "nothing left at 142-144");
-    for (v, n) in [(156, "add_schemeid_to_roles"), (157, "backfill_roles_schemeid"), (158, "add_roles_schemeid_index")] {
+    for (v, n) in [(156, "add_schemeid_to_roles"), (157, "backfill_roles_schemeid"), (158, "add_roles_schemeid_index")]
+    {
         assert!(got.contains(&(v, n.to_string())), "{v} {n} renumbered back");
     }
     let done: String =
-        sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'renumber_roles_schemeid_migrations'").fetch_one(&db).await.unwrap();
+        sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'renumber_roles_schemeid_migrations'")
+            .fetch_one(&db)
+            .await
+            .unwrap();
     assert_eq!(done, "true");
     drop_db(db, "migtest_pre").await;
 }

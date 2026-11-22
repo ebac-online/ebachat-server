@@ -13,7 +13,7 @@ use regex::Regex;
 use serde_json::{Value, json};
 
 use crate::app::{ApiResult, App};
-use crate::hub::{Broadcast, PerUser};
+use crate::hub::{Broadcast, PerUser, PostedAck};
 use crate::model::post::kind;
 use crate::model::{Channel, Post, PostList, StringMap, User, channel, status};
 use crate::posts::{all_strings, without_code};
@@ -68,7 +68,13 @@ impl Keywords {
     pub fn add_user(&mut self, u: &User, channel_props: Option<&StringMap>, status: Option<&str>, allow_channel: bool) {
         self.push(format!("@{}", u.username.to_lowercase()), &u.id);
         let mut total = 0;
-        for (n, k) in u.notify_prop("mention_keys").split(',').map(|k| k.trim().to_lowercase()).filter(|k| !k.is_empty()).enumerate() {
+        for (n, k) in u
+            .notify_prop("mention_keys")
+            .split(',')
+            .map(|k| k.trim().to_lowercase())
+            .filter(|k| !k.is_empty())
+            .enumerate()
+        {
             if n == 10 {
                 break;
             }
@@ -99,13 +105,30 @@ impl Keywords {
     }
 }
 
-/// `StandardMentionParser.ProcessText` over a post's texts (code left out, as the Markdown parser does).
+static REF_DEFINITION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^ {0,3}\[[^\]]+\]:.*$").unwrap());
+static LINK_DESTINATION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\]\([^)]*\)").unwrap());
+static URL_AUTOLINK: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(^|[^a-z0-9])(?:https?|ftp|mailto|tel)://[^\s\p{P}]\S*").unwrap());
+static WWW_AUTOLINK: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(^|[\s*_~)<(>])www[0-9]{0,3}\.\S*").unwrap());
+
+/// Text where mentions count: without code and links.
+fn mention_text(s: &str) -> String {
+    let s = without_code(s);
+    let s = REF_DEFINITION.replace_all(&s, " ");
+    let s = LINK_DESTINATION.replace_all(&s, "] ");
+    let s = URL_AUTOLINK.replace_all(&s, "${1} ");
+    WWW_AUTOLINK.replace_all(&s, "${1} ").into_owned()
+}
+
+/// `StandardMentionParser.ProcessText` over a post's texts.
 pub fn explicit_mentions(post: &Post, k: &Keywords) -> Mentions {
     let mut r = Mentions::default();
     let multibyte: Vec<&String> = k.0.keys().filter(|w| w.len() != w.chars().count()).collect();
     for s in all_strings(post) {
-        let text = without_code(&s);
-        for word in text.split(|c: char| !(c == ':' || c == '.' || c == '-' || c == '_' || c == '@' || c.is_alphanumeric())) {
+        let text = mention_text(&s);
+        for word in
+            text.split(|c: char| !(c == ':' || c == '.' || c == '-' || c == '_' || c == '@' || c.is_alphanumeric()))
+        {
             if word.is_empty() {
                 continue;
             }
@@ -222,7 +245,12 @@ pub fn disable_mention_highlights(post: &mut Post) -> String {
 }
 
 /// `isCommentMention`.
-fn is_comment_mention(user: &User, post: &Post, others: &BTreeMap<String, Post>, by_thread: &mut HashMap<String, bool>) -> bool {
+fn is_comment_mention(
+    user: &User,
+    post: &Post,
+    others: &BTreeMap<String, Post>,
+    by_thread: &mut HashMap<String, bool>,
+) -> bool {
     if post.root_id.is_empty() {
         return false;
     }
@@ -232,7 +260,9 @@ fn is_comment_mention(user: &User, post: &Post, others: &BTreeMap<String, Post>,
     let Some(root) = others.get(&post.root_id) else { return false };
     let mut mentioned = root.user_id == user.id;
     if !mentioned && user.notify_prop("comments") == "any" {
-        mentioned = others.values().any(|o| o.id != post.id && o.root_id == post.root_id && o.user_id == user.id && o.create_at < post.create_at);
+        mentioned = others.values().any(|o| {
+            o.id != post.id && o.root_id == post.root_id && o.user_id == user.id && o.create_at < post.create_at
+        });
     }
     by_thread.insert(post.root_id.clone(), mentioned);
     mentioned
@@ -369,17 +399,24 @@ fn follower_desktop(u: &User, mentioned: bool, cm: Option<&StringMap>) -> bool {
 /// `sendOutOfChannelMentions`: the poster learns which `@names` are not in the channel (and may add them), and
 /// which are not in the team.
 async fn out_of_channel_mentions(app: &App, sender: &User, post: &Post, c: &Channel, names: Vec<String>) {
-    if post.is_system_message() || post.is_notification_suppressed() || c.team_id.is_empty() || c.r#type == channel::GROUP {
+    if post.is_system_message()
+        || post.is_notification_suppressed()
+        || c.team_id.is_empty()
+        || c.r#type == channel::GROUP
+    {
         return;
     }
-    let Ok(all) = crate::users::load_users(app, "u.Username = ANY($1) ORDER BY u.Username ASC", &names).await else { return };
+    let Ok(all) = crate::users::load_users(app, "u.Username = ANY($1) ORDER BY u.Username ASC", &names).await else {
+        return;
+    };
     let viewer = crate::model::Session { user_id: sender.id.clone(), ..Default::default() };
-    let in_team: Vec<String> = sqlx::query_scalar("SELECT UserId FROM TeamMembers WHERE TeamId = $1 AND DeleteAt = 0 AND UserId = ANY($2)")
-        .bind(&c.team_id)
-        .bind(all.iter().map(|u| u.id.clone()).collect::<Vec<_>>())
-        .fetch_all(&app.db)
-        .await
-        .unwrap_or_default();
+    let in_team: Vec<String> =
+        sqlx::query_scalar("SELECT UserId FROM TeamMembers WHERE TeamId = $1 AND DeleteAt = 0 AND UserId = ANY($2)")
+            .bind(&c.team_id)
+            .bind(all.iter().map(|u| u.id.clone()).collect::<Vec<_>>())
+            .fetch_all(&app.db)
+            .await
+            .unwrap_or_default();
     let (mut team_users, mut out_of_team) = (vec![], vec![]);
     for u in all {
         if u.delete_at != 0 || u.is_bot || !app.can_see_user(&viewer, &u.id).await.unwrap_or(false) {
@@ -392,7 +429,11 @@ async fn out_of_channel_mentions(app: &App, sender: &User, post: &Post, c: &Chan
             crate::i18n::tl(&sender.locale, &format!("{id}.one"), &[("Username", &names[0])])
         } else {
             let (last, first) = names.split_last().unwrap();
-            crate::i18n::tl(&sender.locale, &format!("{id}.multiple"), &[("Usernames", &first.join(", @")), ("LastUsername", last)])
+            crate::i18n::tl(
+                &sender.locale,
+                &format!("{id}.multiple"),
+                &[("Usernames", &first.join(", @")), ("LastUsername", last)],
+            )
         }
     };
     if !team_users.is_empty() {
@@ -436,7 +477,8 @@ fn follower_email_push(u: &User, mentioned: bool, cm: Option<&StringMap>) -> (bo
     let push = up("push");
     let user_push = push != "none" && (mentioned || up("push_threads") == "all" || push == "all");
     let cpush = cp("push");
-    let channel_push = cpush != "default" && cpush != "none" && (mentioned || cp("push_threads") == "all" || cpush == "all");
+    let channel_push =
+        cpush != "default" && cpush != "none" && (mentioned || cp("push_threads") == "all" || cpush == "all");
     (email, (cpush == "default" && user_push) || channel_push)
 }
 
@@ -521,10 +563,19 @@ async fn send_email_and_push(
     let max = app.cfg.i64("TeamSettings.MaxNotificationsPerChannel");
     if profiles.len() as i64 > max {
         let max_s = max.to_string();
-        for (on, id) in [(mentions.here, "api.post.disabled_here"), (mentions.channel, "api.post.disabled_channel"), (mentions.all, "api.post.disabled_all")] {
+        for (on, id) in [
+            (mentions.here, "api.post.disabled_here"),
+            (mentions.channel, "api.post.disabled_channel"),
+            (mentions.all, "api.post.disabled_all"),
+        ] {
             if on {
                 let msg = crate::i18n::tl(&sender.locale, id, &[("Users", &max_s)]);
-                let p = Post { channel_id: post.channel_id.clone(), message: msg, create_at: post.create_at + 1, ..Default::default() };
+                let p = Post {
+                    channel_id: post.channel_id.clone(),
+                    message: msg,
+                    create_at: post.create_at + 1,
+                    ..Default::default()
+                };
                 app.send_ephemeral(&post.user_id, p).await;
             }
         }
@@ -583,7 +634,10 @@ pub async fn send_notifications(
     if c.delete_at > 0 {
         return Ok(vec![]);
     }
-    if kind::is_membership(&post.r#type) && !kind::is_add_membership(&post.r#type) && crate::posts::excludes_membership(c) {
+    if kind::is_membership(&post.r#type)
+        && !kind::is_add_membership(&post.r#type)
+        && crate::posts::excludes_membership(c)
+    {
         return Ok(vec![]);
     }
     let suppressed = post.is_notification_suppressed();
@@ -592,10 +646,11 @@ pub async fn send_notifications(
     let props = app.channel_notify_props(&c.id).await?;
     let mut followers: HashSet<String> = HashSet::new();
     if !suppressed && crt_allowed && !post.root_id.is_empty() {
-        let f: Vec<(String,)> = sqlx::query_as("SELECT UserId FROM ThreadMemberships WHERE PostId = $1 AND Following = true")
-            .bind(&post.root_id)
-            .fetch_all(&app.db)
-            .await?;
+        let f: Vec<(String,)> =
+            sqlx::query_as("SELECT UserId FROM ThreadMemberships WHERE PostId = $1 AND Following = true")
+                .bind(&post.root_id)
+                .fetch_all(&app.db)
+                .await?;
         followers.extend(f.into_iter().map(|r| r.0));
     }
     let team_id = c.team_id.clone();
@@ -604,7 +659,8 @@ pub async fn send_notifications(
     let mut new_participants: HashSet<String> = HashSet::new();
     let mut memberships: HashMap<String, crate::model::ThreadMembership> = HashMap::new();
     let mut desktop_followers: Vec<String> = vec![];
-    let (mut crt_email, mut crt_push, mut all_activity_push): (Vec<String>, Vec<String>, Vec<String>) = (vec![], vec![], vec![]);
+    let (mut crt_email, mut crt_push, mut all_activity_push): (Vec<String>, Vec<String>, Vec<String>) =
+        (vec![], vec![], vec![]);
     if !suppressed {
         let (m, k) = app.mentions_and_keywords(post, c, &profiles, &props, parent).await;
         mentions = m;
@@ -620,7 +676,8 @@ pub async fn send_notifications(
             let mut participants: HashSet<String> = HashSet::new();
             participants.insert(post.user_id.clone());
             let skip_channel_mention = |id: &str, t: Mention| {
-                t == Mention::Channel && profiles.get(id).is_some_and(|p| p.notify_prop("channel_mention_auto_follow_threads") == "false")
+                t == Mention::Channel
+                    && profiles.get(id).is_some_and(|p| p.notify_prop("channel_mention_auto_follow_threads") == "false")
             };
             if let Some(parent) = parent
                 && let Some(root) = parent.order.first().and_then(|id| parent.posts.get(id))
@@ -643,7 +700,9 @@ pub async fn send_notifications(
             }
             if c.r#type != channel::DIRECT {
                 for (id, p) in props.iter() {
-                    if !followers.contains(id) && p.0.get("channel_auto_follow_threads").map(String::as_str) == Some("on") {
+                    if !followers.contains(id)
+                        && p.0.get("channel_auto_follow_threads").map(String::as_str) == Some("on")
+                    {
                         participants.insert(id.clone());
                     }
                 }
@@ -734,7 +793,20 @@ pub async fn send_notifications(
     }
 
     if !suppressed {
-        send_email_and_push(app, post, c, sender, &profiles, &props, &mentions, &mentioned, &crt_email, &crt_push, &all_activity_push).await;
+        send_email_and_push(
+            app,
+            post,
+            c,
+            sender,
+            &profiles,
+            &props,
+            &mentions,
+            &mentioned,
+            &crt_email,
+            &crt_push,
+            &all_activity_push,
+        )
+        .await;
     }
 
     // The posted event.
@@ -768,7 +840,13 @@ pub async fn send_notifications(
     if !post.file_ids.0.is_empty() {
         data["otherFile"] = "true".into();
         if let Ok(infos) = app.file_infos_for_post(&post.id, false).await
-            && infos.iter().any(|f| f.mime_type.starts_with("image") || matches!(f.extension.to_lowercase().as_str(), "jpg" | "jpeg" | "gif" | "bmp" | "png" | "tiff" | "tif" | "webp"))
+            && infos.iter().any(|f| {
+                f.mime_type.starts_with("image")
+                    || matches!(
+                        f.extension.to_lowercase().as_str(),
+                        "jpg" | "jpeg" | "gif" | "bmp" | "png" | "tiff" | "tif" | "webp"
+                    )
+            })
         {
             data["image"] = "true".into();
         }
@@ -785,10 +863,36 @@ pub async fn send_notifications(
         }
         (!extra.is_empty()).then_some(extra)
     });
+    // shouldAckWebsocketNotification: the members whose desktop notifications fire for every message here.
+    let users = profiles
+        .keys()
+        .filter(|id| {
+            let cl = props.get(*id).and_then(|m| m.0.get("desktop")).map(String::as_str).unwrap_or("");
+            let ul = profiles.get(*id).map_or("", |u| u.notify_prop("desktop"));
+            cl == "all"
+                || (cl == "default" && ul == "all")
+                || (c.r#type == channel::GROUP && ((cl == "default" && ul == "mention") || cl == "mention"))
+        })
+        .cloned()
+        .collect();
+    let posted_ack =
+        Some(Arc::new(PostedAck { poster: post.user_id.clone(), direct: c.r#type == channel::DIRECT, users }));
     let b = if kind::is_add_membership(&post.r#type) && crate::posts::excludes_membership(c) {
-        Broadcast { user_id: post.prop_str("addedUserId").to_string(), per_user: Some(per_user), post_hook: post_hook.clone(), ..Default::default() }
+        Broadcast {
+            user_id: post.prop_str("addedUserId").to_string(),
+            per_user: Some(per_user),
+            post_hook: post_hook.clone(),
+            posted_ack,
+            ..Default::default()
+        }
     } else {
-        Broadcast { channel_id: post.channel_id.clone(), per_user: Some(per_user), post_hook: post_hook.clone(), ..Default::default() }
+        Broadcast {
+            channel_id: post.channel_id.clone(),
+            per_user: Some(per_user),
+            post_hook: post_hook.clone(),
+            posted_ack,
+            ..Default::default()
+        }
     };
     app.hub.publish("posted", data, b);
 
@@ -817,7 +921,13 @@ pub async fn send_notifications(
                 }
             }
             if uid == post.user_id {
-                let _ = app.maintain_membership(&uid, &post.root_id, MembershipOpts { update_viewed: true, ..Default::default() }).await;
+                let _ = app
+                    .maintain_membership(
+                        &uid,
+                        &post.root_id,
+                        MembershipOpts { update_viewed: true, ..Default::default() },
+                    )
+                    .await;
                 t.unread_mentions = 0;
                 t.unread_replies = 0;
             }
@@ -893,5 +1003,30 @@ mod tests {
         assert_eq!(m.users.len(), 2);
         let m = explicit_mentions(&p("ask @carol.smith"), &k);
         assert_eq!(m.other_potential, vec!["carol.smith".to_string()]);
+    }
+
+    #[test]
+    fn mentions_in_links() {
+        let mut k = Keywords::default();
+        k.add_user(&user("a", "alice"), None, Some("online"), true);
+        let p = |m: &str| Post { message: m.into(), ..Default::default() };
+        for (message, mentioned) in [
+            ("https://youtube.com/@alice", false),
+            ("http://x/a?u=@alice", false),
+            ("ftp://x/@alice", false),
+            ("<http://x/@alice>", false),
+            ("text (http://x/@alice)", false),
+            ("see:http://x/@alice", false),
+            ("www.x.com/@alice", false),
+            ("[link](http://x/@alice)", false),
+            ("[x][r]\n\n[r]: http://x/@alice", false),
+            ("http://x/@alice and @alice", true),
+            ("[@alice](http://x)", true),
+            ("![@alice](http://x/y.png)", true),
+            ("x.com/@alice", true),
+            ("http://@alice", true),
+        ] {
+            assert_eq!(explicit_mentions(&p(message), &k).users.contains_key("a"), mentioned, "{message}");
+        }
     }
 }

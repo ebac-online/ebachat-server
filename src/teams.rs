@@ -8,8 +8,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -80,9 +80,9 @@ impl App {
     }
 
     pub async fn team_by_name(&self, name: &str) -> ApiResult<Team> {
-        db::one(&self.db, "name = $1", name)
-            .await?
-            .ok_or_else(|| AppError::not_found("app.team.get_by_name.missing.app_error", "Unable to find the existing team."))
+        db::one(&self.db, "name = $1", name).await?.ok_or_else(|| {
+            AppError::not_found("app.team.get_by_name.missing.app_error", "Unable to find the existing team.")
+        })
     }
 
     /// `SanitizeTeam`: the email for team managers, the invite id for inviters.
@@ -158,11 +158,12 @@ impl App {
                 "This team has reached the maximum number of allowed accounts. Contact your System Administrator to set a higher limit.",
             )
         };
-        let existing: Option<(i64,)> = sqlx::query_as("SELECT COALESCE(DeleteAt, 0) FROM TeamMembers WHERE TeamId = $1 AND UserId = $2")
-            .bind(&team.id)
-            .bind(&user.id)
-            .fetch_optional(&self.db)
-            .await?;
+        let existing: Option<(i64,)> =
+            sqlx::query_as("SELECT COALESCE(DeleteAt, 0) FROM TeamMembers WHERE TeamId = $1 AND UserId = $2")
+                .bind(&team.id)
+                .bind(&user.id)
+                .fetch_optional(&self.db)
+                .await?;
         if let Some((0,)) = existing {
             return Ok(self.team_member(&team.id, &user.id).await?.unwrap_or_default());
         }
@@ -238,7 +239,13 @@ impl App {
 
     /// `JoinDefaultChannels`: town-square and off-topic (or the configured ones), the join message only with
     /// `ExperimentalEnableDefaultChannelLeaveJoinMessages`.
-    pub async fn join_default_channels(&self, team_id: &str, user: &User, admin: bool, requestor: &str) -> ApiResult<()> {
+    pub async fn join_default_channels(
+        &self,
+        team_id: &str,
+        user: &User,
+        admin: bool,
+        requestor: &str,
+    ) -> ApiResult<()> {
         let requestor = if requestor.is_empty() { None } else { self.user(requestor).await? };
         let mut err = None;
         for name in self.default_channel_names() {
@@ -338,12 +345,13 @@ impl App {
             }
         }
         if !r.channels.is_empty() {
-            let found: bool =
-                sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ChannelMembers WHERE UserId = $1 AND ChannelId = ANY($2))")
-                    .bind(other)
-                    .bind(&r.channels)
-                    .fetch_one(&self.db)
-                    .await?;
+            let found: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM ChannelMembers WHERE UserId = $1 AND ChannelId = ANY($2))",
+            )
+            .bind(other)
+            .bind(&r.channels)
+            .fetch_one(&self.db)
+            .await?;
             if found {
                 return Ok(true);
             }
@@ -418,17 +426,10 @@ fn join_message(user: &User, requestor: Option<&User>, c: &Channel) -> Post {
 
 // ---------- reads ----------
 
-#[derive(Deserialize, Default)]
-#[serde(default)]
-struct PageQuery {
-    page: i64,
-    per_page: Option<i64>,
-    include_total_count: bool,
-}
-
 /// `getAllTeams`: what the session may list, archived teams included (`GetAllPage` and `AnalyticsTeamCount` with
 /// options have no `DeleteAt` filter).
-async fn all_teams(St(app): St<State>, Auth(s): Auth, Query(q): Query<PageQuery>) -> ApiResult<Response> {
+async fn all_teams(St(app): St<State>, Auth(s): Auth, Query(q): Query<HashMap<String, String>>) -> ApiResult<Response> {
+    let (page, per_page) = crate::channels_api::paging(&q);
     let private = app.has_perm(&s, "list_private_teams").await;
     let public = app.has_perm(&s, "list_public_teams").await;
     let filter = match (private, public) {
@@ -443,17 +444,16 @@ async fn all_teams(St(app): St<State>, Auth(s): Auth, Query(q): Query<PageQuery>
             ));
         }
     };
-    let per_page = q.per_page.unwrap_or(60).clamp(0, 200);
-    let sql = format!(
-        "{} WHERE true{filter} ORDER BY DisplayName LIMIT $1 OFFSET $2",
-        Team::SELECT
-    );
-    let mut teams: Vec<Team> =
-        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(per_page).bind(per_page * q.page).fetch_all(&app.db).await?;
+    let sql = format!("{} WHERE true{filter} ORDER BY DisplayName LIMIT $1 OFFSET $2", Team::SELECT);
+    let mut teams: Vec<Team> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(per_page)
+        .bind(per_page.saturating_mul(page))
+        .fetch_all(&app.db)
+        .await?;
     for t in &mut teams {
         app.sanitize_team(&s, t).await;
     }
-    if q.include_total_count {
+    if crate::channels_api::parse_bool(q.get("include_total_count")) {
         let sql = format!("SELECT COUNT(*) FROM Teams WHERE true{filter}");
         let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).fetch_one(&app.db).await?;
         return Ok(Json(json!({"teams": teams, "total_count": n})).into_response());
@@ -618,7 +618,8 @@ async fn team_stats(St(app): St<State>, Auth(s): Auth, Path(team_id): Path<Strin
         "SELECT COUNT(DISTINCT tm.UserId), COUNT(DISTINCT tm.UserId) FILTER (WHERE u.DeleteAt = 0)
          FROM TeamMembers tm JOIN Users u ON tm.UserId = u.Id WHERE tm.DeleteAt = 0 AND tm.TeamId = $1{restrict}"
     );
-    let (total, active): (i64, i64) = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&team_id).fetch_one(&app.db).await?;
+    let (total, active): (i64, i64) =
+        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&team_id).fetch_one(&app.db).await?;
     #[derive(Serialize)]
     struct TeamStats {
         team_id: String,
@@ -647,7 +648,8 @@ async fn team_icon(
         return Ok(r);
     }
     let data = app.files.read(&format!("teams/{team_id}/teamIcon.png")).await.map_err(|e| {
-        AppError::not_found("api.team.get_team_icon.read_file.app_error", "Unable to read the team icon file.").detail(e.to_string())
+        AppError::not_found("api.team.get_team_icon.read_file.app_error", "Unable to read the team icon file.")
+            .detail(e.to_string())
     })?;
     let mut r = data.into_response();
     let h = r.headers_mut();
@@ -667,6 +669,15 @@ pub fn not_modified(headers: &HeaderMap, etag: &str) -> Option<Response> {
     })
 }
 
+/// The answer with its `ETag`, for the client to send back as `If-None-Match`.
+pub fn with_etag(r: impl IntoResponse, etag: &str) -> Response {
+    let mut r = r.into_response();
+    if let Ok(v) = HeaderValue::from_str(etag) {
+        r.headers_mut().insert(header::ETAG, v);
+    }
+    r
+}
+
 // ---------- members ----------
 
 async fn get_member(
@@ -683,7 +694,10 @@ async fn get_member(
         return Err(AppError::forbidden_perm(perm::VIEW_MEMBERS));
     }
     let mut m = app.team_member(&team_id, &user_id).await?.ok_or_else(|| {
-        AppError::not_found("app.team.get_member.missing.app_error", "No team member found for that user ID and team ID.")
+        AppError::not_found(
+            "app.team.get_member.missing.app_error",
+            "No team member found for that user ID and team ID.",
+        )
     })?;
     if !app.has_team_perm(&s, &team_id, "manage_team_roles").await {
         sanitize_member(&mut m, &s.user_id);
@@ -715,7 +729,9 @@ async fn members_by_ids(
             "{} JOIN Users u ON tm.UserId = u.Id WHERE tm.teamid = $1 AND tm.userid = ANY($2) AND tm.deleteat = 0 AND {r}",
             perm::team_members_select()
         ),
-        None => format!("{} WHERE tm.teamid = $1 AND tm.userid = ANY($2) AND tm.deleteat = 0", perm::team_members_select()),
+        None => {
+            format!("{} WHERE tm.teamid = $1 AND tm.userid = ANY($2) AND tm.deleteat = 0", perm::team_members_select())
+        }
     };
     let rows: Vec<perm::WithScheme<TeamMember>> =
         sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&team_id).bind(&ids).fetch_all(&app.db).await?;
@@ -763,9 +779,10 @@ async fn add_member(
     } else {
         app.require_team(&s, &team_id, perm::ADD_USER_TO_TEAM).await?;
         if !app.has_team_perm(&s, &team_id, "invite_guest").await {
-            let u = app.user(&m.user_id).await?.ok_or_else(|| {
-                AppError::not_found("api.team.user.missing_account", "Unable to find the user.")
-            })?;
+            let u = app
+                .user(&m.user_id)
+                .await?
+                .ok_or_else(|| AppError::not_found("api.team.user.missing_account", "Unable to find the user."))?;
             if u.is_guest() {
                 return Err(AppError::forbidden_perm("invite_guest"));
             }
@@ -828,9 +845,10 @@ async fn add_members(
             return Err(AppError::invalid_param("user_id"));
         }
         if !guests_ok {
-            let u = app.user(&m.user_id).await?.ok_or_else(|| {
-                AppError::not_found("api.team.user.missing_account", "Unable to find the user.")
-            })?;
+            let u = app
+                .user(&m.user_id)
+                .await?
+                .ok_or_else(|| AppError::not_found("api.team.user.missing_account", "Unable to find the user."))?;
             if u.is_guest() {
                 return Err(AppError::forbidden_perm("invite_guest"));
             }
@@ -872,10 +890,16 @@ struct InviteQuery {
 /// `addUserToTeamFromInvite` with an invite id (email tokens need email, which this server does not send).
 async fn join_from_invite(St(app): St<State>, Auth(s): Auth, Query(q): Query<InviteQuery>) -> ApiResult<Response> {
     if !q.token.is_empty() {
-        return Err(AppError::bad_request("api.user.create_user.signup_link_invalid.app_error", "The signup link does not appear to be valid."));
+        return Err(AppError::bad_request(
+            "api.user.create_user.signup_link_invalid.app_error",
+            "The signup link does not appear to be valid.",
+        ));
     }
     if q.invite_id.is_empty() {
-        return Err(AppError::bad_request("api.team.add_user_to_team.missing_parameter.app_error", "Parameter required to add user to team."));
+        return Err(AppError::bad_request(
+            "api.team.add_user_to_team.missing_parameter.app_error",
+            "Parameter required to add user to team.",
+        ));
     }
     if s.prop("is_guest") == "true" {
         return Err(AppError::new(
@@ -886,7 +910,11 @@ async fn join_from_invite(St(app): St<State>, Auth(s): Auth, Query(q): Query<Inv
     }
     let team = team_by_invite(&app, &q.invite_id).await?;
     if team.group_constrained == Some(true) {
-        return Err(AppError::new(StatusCode::FORBIDDEN, "app.team.invite_id.group_constrained.error", "Unable to join a group-constrained team by invite."));
+        return Err(AppError::new(
+            StatusCode::FORBIDDEN,
+            "app.team.invite_id.group_constrained.error",
+            "Unable to join a group-constrained team by invite.",
+        ));
     }
     let user = app.user(&s.user_id).await?.ok_or_else(crate::users::missing_account)?;
     let tm = app.join_user_to_team(&team, &user, "").await?;
@@ -894,15 +922,22 @@ async fn join_from_invite(St(app): St<State>, Auth(s): Auth, Query(q): Query<Inv
 }
 
 pub async fn team_by_invite(app: &App, invite_id: &str) -> ApiResult<Team> {
-    let t: Option<Team> = if invite_id.is_empty() { None } else { db::one(&app.db, "inviteid = $1", invite_id).await? };
-    t.ok_or_else(|| AppError::not_found("app.team.get_by_invite_id.finding.app_error", "Unable to find the existing team."))
+    let t: Option<Team> =
+        if invite_id.is_empty() { None } else { db::one(&app.db, "inviteid = $1", invite_id).await? };
+    t.ok_or_else(|| {
+        AppError::not_found("app.team.get_by_invite_id.finding.app_error", "Unable to find the existing team.")
+    })
 }
 
 /// `getInviteInfo`: no session needed.
 async fn invite_info(St(app): St<State>, _: MaybeAuth, Path(invite_id): Path<String>) -> ApiResult<Response> {
     let team = team_by_invite(&app, &invite_id).await?;
     if team.r#type != "O" {
-        return Err(AppError::new(StatusCode::FORBIDDEN, "api.team.get_invite_info.not_open_team", "Invite is invalid because this is not an open team."));
+        return Err(AppError::new(
+            StatusCode::FORBIDDEN,
+            "api.team.get_invite_info.not_open_team",
+            "Invite is invalid because this is not an open team.",
+        ));
     }
     // Go's field order: display_name, description, name, id.
     let v = format!(
@@ -978,7 +1013,11 @@ fn rate_limited(user_id: &str, team_id: &str) -> AppError {
 /// `InviteNewUsersToTeam`: every address allowed and not deactivated, then one email each (failures logged).
 pub async fn invite_new_users_to_team(app: &App, emails: Vec<String>, team_id: &str, sender_id: &str) -> ApiResult<()> {
     if !app.cfg.bool("ServiceSettings.EnableEmailInvitations") {
-        return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.team.invite_members.disabled.app_error", "Email invitations are disabled."));
+        return Err(AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "api.team.invite_members.disabled.app_error",
+            "Email invitations are disabled.",
+        ));
     }
     if emails.is_empty() {
         return Err(AppError::bad_request("api.team.invite_members.no_one.app_error", ""));
@@ -993,12 +1032,17 @@ pub async fn invite_new_users_to_team(app: &App, emails: Vec<String>, team_id: &
     };
     let bad: Vec<String> = emails.iter().filter(|e| !email_allowed(e, &allowed)).cloned().collect();
     if !bad.is_empty() {
-        return Err(AppError::bad_request("api.team.invite_members.invalid_email.app_error", "").with_param("Addresses", &bad.join(", ")));
+        return Err(AppError::bad_request("api.team.invite_members.invalid_email.app_error", "")
+            .with_param("Addresses", &bad.join(", ")));
     }
-    let gone: Vec<String> = sqlx::query_scalar("SELECT Email FROM Users WHERE Email = ANY($1) AND DeleteAt <> 0").bind(&emails).fetch_all(&app.db).await?;
+    let gone: Vec<String> = sqlx::query_scalar("SELECT Email FROM Users WHERE Email = ANY($1) AND DeleteAt <> 0")
+        .bind(&emails)
+        .fetch_all(&app.db)
+        .await?;
     let gone: Vec<String> = emails.iter().filter(|e| gone.contains(e)).cloned().collect();
     if !gone.is_empty() {
-        return Err(AppError::bad_request("api.team.invite_members.account_deactivated.app_error", "").with_param("Addresses", &gone.join(", ")));
+        return Err(AppError::bad_request("api.team.invite_members.account_deactivated.app_error", "")
+            .with_param("Addresses", &gone.join(", ")));
     }
     let d = crate::email::InviteData {
         team: &team,
@@ -1037,7 +1081,9 @@ async fn invite_by_email(
     if !app.has_team_perm(&s, &team_id, perm::ADD_USER_TO_TEAM).await {
         return Err(AppError::forbidden_perm(perm::INVITE_USER));
     }
-    let invalid_body = |e: String| AppError::bad_request("api.team.invite_members_to_team_and_channels.invalid_body.app_error", "").detail(e);
+    let invalid_body = |e: String| {
+        AppError::bad_request("api.team.invite_members_to_team_and_channels.invalid_body.app_error", "").detail(e)
+    };
     let invite: MemberInvite = serde_json::from_slice(&body).map_err(|e| invalid_body(e.to_string()))?;
     let (emails, mut channel_ids, message, profiles) = match invite {
         MemberInvite::List(l) => (l, vec![], String::new(), vec![]),
@@ -1062,11 +1108,16 @@ async fn invite_by_email(
     // InviteNewUsersToTeamGracefully: profiles need an Enterprise license.
     if !profiles.is_empty() {
         if !app.cfg.bool("ServiceSettings.EnableEmailInvitations") {
-            return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.team.invite_members.disabled.app_error", "Email invitations are disabled."));
+            return Err(AppError::new(
+                StatusCode::NOT_IMPLEMENTED,
+                "api.team.invite_members.disabled.app_error",
+                "Email invitations are disabled.",
+            ));
         }
         return Err(AppError::bad_request("api.team.invite_members.profiles_license.app_error", ""));
     }
-    let out = invite_new_users_gracefully(&app, emails.clone(), &channel_ids, message, &team_id, &s.user_id, "").await?;
+    let out =
+        invite_new_users_gracefully(&app, emails.clone(), &channel_ids, message, &team_id, &s.user_id, "").await?;
     // The reminder job Go schedules (`resend_invitation_email`), for the job server to pick up.
     let mut data = serde_json::Map::new();
     data.insert("emailList".into(), serde_json::Value::String(serde_json::to_string(&emails).unwrap_or_default()));
@@ -1074,7 +1125,10 @@ async fn invite_by_email(
     data.insert("senderID".into(), serde_json::Value::String(s.user_id.clone()));
     data.insert("scheduledAt".into(), serde_json::Value::String(crate::app::now_ms().to_string()));
     if !channel_ids.is_empty() {
-        data.insert("channelList".into(), serde_json::Value::String(serde_json::to_string(&channel_ids).unwrap_or_default()));
+        data.insert(
+            "channelList".into(),
+            serde_json::Value::String(serde_json::to_string(&channel_ids).unwrap_or_default()),
+        );
     }
     sqlx::query(
         "INSERT INTO Jobs (Id, Type, Priority, CreateAt, StartAt, LastActivityAt, Status, Progress, Data)
@@ -1102,7 +1156,11 @@ pub async fn invite_new_users_gracefully(
     reminder_interval: &str,
 ) -> ApiResult<Vec<EmailInviteWithError>> {
     if !app.cfg.bool("ServiceSettings.EnableEmailInvitations") {
-        return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.team.invite_members.disabled.app_error", "Email invitations are disabled."));
+        return Err(AppError::new(
+            StatusCode::NOT_IMPLEMENTED,
+            "api.team.invite_members.disabled.app_error",
+            "Email invitations are disabled.",
+        ));
     }
     if emails.is_empty() {
         return Err(AppError::bad_request("api.team.invite_members.no_one.app_error", ""));
@@ -1126,7 +1184,10 @@ pub async fn invite_new_users_gracefully(
         vec![&team.allowed_domains, &restrict]
     };
     let deactivated = |email: String| async move {
-        let d: Option<i64> = sqlx::query_scalar("SELECT DeleteAt FROM Users WHERE Email = $1").bind(&email).fetch_optional(&app.db).await?;
+        let d: Option<i64> = sqlx::query_scalar("SELECT DeleteAt FROM Users WHERE Email = $1")
+            .bind(&email)
+            .fetch_optional(&app.db)
+            .await?;
         ApiResult::Ok(d.is_some_and(|d| d != 0))
     };
     let sender_name = sender.display_name(app.cfg.str("TeamSettings.TeammateNameDisplay"));
@@ -1136,9 +1197,15 @@ pub async fn invite_new_users_gracefully(
     for email in emails {
         let email = email.trim().to_lowercase();
         let error = if !email_allowed(&email, &allowed) {
-            Some(AppError::bad_request("api.team.invite_members.invalid_email.app_error", "").with_param("Addresses", &email))
+            Some(
+                AppError::bad_request("api.team.invite_members.invalid_email.app_error", "")
+                    .with_param("Addresses", &email),
+            )
         } else if deactivated(email.clone()).await? {
-            Some(AppError::bad_request("api.team.invite_members.account_deactivated.app_error", "").with_param("Addresses", &email))
+            Some(
+                AppError::bad_request("api.team.invite_members.account_deactivated.app_error", "")
+                    .with_param("Addresses", &email),
+            )
         } else {
             good.push(email.clone());
             None
@@ -1174,12 +1241,21 @@ pub async fn invite_new_users_gracefully(
             }
             Err(crate::email::InviteError::RateLimited) => return Err(rate_limited(&sender.id, &team.id)),
             Err(crate::email::InviteError::SendFailed) => {
-                let defaults = app.cfg.str("EmailSettings.SMTPServer") == "localhost" && app.cfg.str("EmailSettings.SMTPPort") == "10025";
+                let defaults = app.cfg.str("EmailSettings.SMTPServer") == "localhost"
+                    && app.cfg.str("EmailSettings.SMTPPort") == "10025";
                 for i in out.iter_mut().filter(|i| i.error.is_none()) {
                     i.error = Some(if defaults {
-                        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.team.invite_members.unable_to_send_email_with_defaults.app_error", "")
+                        AppError::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "api.team.invite_members.unable_to_send_email_with_defaults.app_error",
+                            "",
+                        )
                     } else {
-                        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.team.invite_members.unable_to_send_email.app_error", "Error while sending the email")
+                        AppError::new(
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "api.team.invite_members.unable_to_send_email.app_error",
+                            "Error while sending the email",
+                        )
                     });
                 }
             }

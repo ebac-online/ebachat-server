@@ -44,7 +44,12 @@ fn reader(data: &[u8]) -> Option<ImageReader<Cursor<&[u8]>>> {
     // Only the formats Go's server registers.
     matches!(
         r.format()?,
-        ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::Gif | ImageFormat::Bmp | ImageFormat::Tiff | ImageFormat::WebP
+        ImageFormat::Jpeg
+            | ImageFormat::Png
+            | ImageFormat::Gif
+            | ImageFormat::Bmp
+            | ImageFormat::Tiff
+            | ImageFormat::WebP
     )
     .then_some(r)
 }

@@ -53,7 +53,11 @@ fn site_name(_app: &App) -> String {
 
 /// The locale of `i18n.T` (the server's) when none is given.
 fn locale_or_server(app: &App, locale: &str) -> String {
-    if locale.is_empty() { app.cfg.str("LocalizationSettings.DefaultServerLocale").to_string() } else { locale.to_string() }
+    if locale.is_empty() {
+        app.cfg.str("LocalizationSettings.DefaultServerLocale").to_string()
+    } else {
+        locale.to_string()
+    }
 }
 
 /// `condenseSiteURL`: the host and path without the scheme.
@@ -137,7 +141,17 @@ fn render_props(name: &str, props: BTreeMap<String, V>) -> String {
 
 /// A notice with a title, an info line and the warning (`email_change_body`, `password_change_body`, ...).
 #[allow(clippy::too_many_arguments)]
-async fn send_notice(app: &App, to: &str, locale: &str, subject: String, template: &str, title: String, info: String, warning_id: &str, category: &str) -> Result<(), String> {
+async fn send_notice(
+    app: &App,
+    to: &str,
+    locale: &str,
+    subject: String,
+    template: &str,
+    title: String,
+    info: String,
+    warning_id: &str,
+    category: &str,
+) -> Result<(), String> {
     let mut p = template_props(app, locale);
     p.insert("SiteURL".into(), V::from(site_url(app)));
     p.insert("Title".into(), V::from(title));
@@ -152,8 +166,23 @@ pub async fn send_change_username(app: &App, new_username: &str, email: &str, lo
     let sn = site_name(app);
     let subject = tl(locale, "api.templates.username_change_subject", &[("SiteName", &sn), ("TeamDisplayName", &sn)]);
     let title = tl(locale, "api.templates.username_change_body.title", &[]);
-    let info = tl(locale, "api.templates.username_change_body.info", &[("TeamDisplayName", &sn), ("NewUsername", new_username)]);
-    send_notice(app, email, locale, subject, "email_change_body", title, info, "api.templates.email_warning", "ChangeUsernameEmail").await
+    let info = tl(
+        locale,
+        "api.templates.username_change_body.info",
+        &[("TeamDisplayName", &sn), ("NewUsername", new_username)],
+    );
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "email_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "ChangeUsernameEmail",
+    )
+    .await
 }
 
 /// `SendEmailChangeVerifyEmail`.
@@ -161,12 +190,16 @@ pub async fn send_email_change_verify(app: &App, new_email: &str, locale: &str, 
     let sn = site_name(app);
     let site = site_url(app);
     let link = format!("{site}/do_verify_email?token={token}&email={}", query_escape(new_email));
-    let subject = tl(locale, "api.templates.email_change_verify_subject", &[("SiteName", &sn), ("TeamDisplayName", &sn)]);
+    let subject =
+        tl(locale, "api.templates.email_change_verify_subject", &[("SiteName", &sn), ("TeamDisplayName", &sn)]);
     let mut p = template_props(app, locale);
     let t = |id: &str| tl(locale, id, &[]);
     p.insert("SiteURL".into(), V::from(site.clone()));
     p.insert("Title".into(), V::from(t("api.templates.email_change_verify_body.title")));
-    p.insert("Info".into(), V::from(tl(locale, "api.templates.email_change_verify_body.info", &[("TeamDisplayName", &sn)])));
+    p.insert(
+        "Info".into(),
+        V::from(tl(locale, "api.templates.email_change_verify_body.info", &[("TeamDisplayName", &sn)])),
+    );
     p.insert("VerifyUrl".into(), V::from(link));
     p.insert("VerifyButton".into(), V::from(t("api.templates.email_change_verify_body.button")));
     p.insert("QuestionTitle".into(), V::from(t("api.templates.questions_footer.title")));
@@ -184,7 +217,18 @@ pub async fn send_email_change(app: &App, old_email: &str, new_email: &str, loca
     let subject = tl(locale, "api.templates.email_change_subject", &[("SiteName", &sn), ("TeamDisplayName", &sn)]);
     let title = tl(locale, "api.templates.email_change_body.title", &[]);
     let info = tl(locale, "api.templates.email_change_body.info", &[("TeamDisplayName", &sn), ("NewEmail", new_email)]);
-    send_notice(app, old_email, locale, subject, "email_change_body", title, info, "api.templates.email_warning", "EmailChangeEmail").await
+    send_notice(
+        app,
+        old_email,
+        locale,
+        subject,
+        "email_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "EmailChangeEmail",
+    )
+    .await
 }
 
 /// `url.QueryEscape`.
@@ -231,7 +275,18 @@ pub async fn send_sign_in_change(app: &App, email: &str, method: &str, locale: &
     let subject = tl(locale, "api.templates.signin_change_email.subject", &[("SiteName", &sn)]);
     let title = tl(locale, "api.templates.signin_change_email.body.title", &[]);
     let info = tl(locale, "api.templates.signin_change_email.body.info", &[("SiteName", &sn), ("Method", method)]);
-    send_notice(app, email, locale, subject, "signin_change_body", title, info, "api.templates.email_warning", "SignInChangeEmail").await
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "signin_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "SignInChangeEmail",
+    )
+    .await
 }
 
 /// `SendWelcomeEmail`: none when the user opted out; an error when neither notifications nor verification are on.
@@ -252,7 +307,10 @@ pub async fn send_welcome(app: &App, u: &User, redirect: &str) -> Result<(), Str
     p.insert("SiteURL".into(), V::from(site.clone()));
     p.insert("Title".into(), V::from(t("api.templates.welcome_body.title")));
     p.insert("SubTitle1".into(), V::from(t("api.templates.welcome_body.subTitle1")));
-    p.insert("ServerURL".into(), V::from(tl(locale, "api.templates.welcome_body.serverURL", &[("ServerURL", &server)])));
+    p.insert(
+        "ServerURL".into(),
+        V::from(tl(locale, "api.templates.welcome_body.serverURL", &[("ServerURL", &server)])),
+    );
     p.insert("SubTitle2".into(), V::from(t("api.templates.welcome_body.subTitle2")));
     p.insert("Button".into(), V::from(t("api.templates.welcome_body.button")));
     p.insert("Info".into(), V::from(t("api.templates.welcome_body.info")));
@@ -281,8 +339,23 @@ pub async fn send_password_change(app: &App, email: &str, method: &str, locale: 
     let site = site_url(app);
     let subject = tl(locale, "api.templates.password_change_subject", &[("SiteName", &sn), ("TeamDisplayName", &sn)]);
     let title = tl(locale, "api.templates.password_change_body.title", &[]);
-    let info = tl(locale, "api.templates.password_change_body.info", &[("TeamDisplayName", &sn), ("TeamURL", &site), ("Method", method)]);
-    send_notice(app, email, locale, subject, "password_change_body", title, info, "api.templates.email_warning", "PasswordChangeEmail").await
+    let info = tl(
+        locale,
+        "api.templates.password_change_body.info",
+        &[("TeamDisplayName", &sn), ("TeamURL", &site), ("Method", method)],
+    );
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "password_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "PasswordChangeEmail",
+    )
+    .await
 }
 
 /// `SendUserAccessTokenAddedEmail`.
@@ -292,7 +365,18 @@ pub async fn send_access_token_added(app: &App, email: &str, locale: &str) -> Re
     let subject = tl(locale, "api.templates.user_access_token_subject", &[("SiteName", &sn)]);
     let title = tl(locale, "api.templates.user_access_token_body.title", &[]);
     let info = tl(locale, "api.templates.user_access_token_body.info", &[("SiteName", &sn), ("SiteURL", &site)]);
-    send_notice(app, email, locale, subject, "password_change_body", title, info, "api.templates.email_warning", "UserAccessTokenAddedEmail").await
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "password_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "UserAccessTokenAddedEmail",
+    )
+    .await
 }
 
 /// `SendUserAccessTokenRotatedEmail`.
@@ -301,8 +385,20 @@ pub async fn send_access_token_rotated(app: &App, email: &str, locale: &str) -> 
     let site = site_url(app);
     let subject = tl(locale, "api.templates.user_access_token_rotated_subject", &[("SiteName", &sn)]);
     let title = tl(locale, "api.templates.user_access_token_rotated_body.title", &[]);
-    let info = tl(locale, "api.templates.user_access_token_rotated_body.info", &[("SiteName", &sn), ("SiteURL", &site)]);
-    send_notice(app, email, locale, subject, "password_change_body", title, info, "api.templates.email_warning", "UserAccessTokenRotatedEmail").await
+    let info =
+        tl(locale, "api.templates.user_access_token_rotated_body.info", &[("SiteName", &sn), ("SiteURL", &site)]);
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "password_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "UserAccessTokenRotatedEmail",
+    )
+    .await
 }
 
 /// `SendPasswordResetEmail`.
@@ -334,17 +430,40 @@ pub async fn send_mfa_change(app: &App, email: &str, activated: bool, locale: &s
     };
     let info = tl(locale, info, &[("SiteURL", &site)]);
     let title = tl(locale, title, &[]);
-    send_notice(app, email, locale, subject, "mfa_change_body", title, info, "api.templates.email_warning", "MfaChangeEmail").await
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "mfa_change_body",
+        title,
+        info,
+        "api.templates.email_warning",
+        "MfaChangeEmail",
+    )
+    .await
 }
 
 /// `SendDeactivateAccountEmail`.
 pub async fn send_deactivate(app: &App, email: &str, locale: &str) -> Result<(), String> {
     let site = site_url(app);
     let server = condense(&site);
-    let subject = tl(locale, "api.templates.deactivate_subject", &[("SiteName", &site_name(app)), ("ServerURL", &server)]);
+    let subject =
+        tl(locale, "api.templates.deactivate_subject", &[("SiteName", &site_name(app)), ("ServerURL", &server)]);
     let title = tl(locale, "api.templates.deactivate_body.title", &[("ServerURL", &server)]);
     let info = tl(locale, "api.templates.deactivate_body.info", &[("SiteURL", &site)]);
-    send_notice(app, email, locale, subject, "deactivate_body", title, info, "api.templates.deactivate_body.warning", "DeactivateAccountEmail").await
+    send_notice(
+        app,
+        email,
+        locale,
+        subject,
+        "deactivate_body",
+        title,
+        info,
+        "api.templates.deactivate_body.warning",
+        "DeactivateAccountEmail",
+    )
+    .await
 }
 
 /// `SendNotificationMail` (plugins' `SendMail`).
@@ -359,7 +478,11 @@ pub async fn send_notification_mail(app: &App, to: &str, subject: &str, html: &s
 
 /// `CreateVerifyEmailToken`: the user's other verification tokens go first.
 pub async fn create_verify_email_token(app: &App, user_id: &str, email: &str) -> ApiResult<String> {
-    let extra = format!(r#"{{"UserId":{},"Email":{}}}"#, serde_json::to_string(user_id).unwrap(), serde_json::to_string(email).unwrap());
+    let extra = format!(
+        r#"{{"UserId":{},"Email":{}}}"#,
+        serde_json::to_string(user_id).unwrap(),
+        serde_json::to_string(email).unwrap()
+    );
     let rows: Vec<(String, String)> = sqlx::query_as("SELECT Token, COALESCE(Extra, '') FROM Tokens WHERE Type = $1")
         .bind(TOKEN_VERIFY_EMAIL)
         .fetch_all(&app.db)
@@ -371,7 +494,9 @@ pub async fn create_verify_email_token(app: &App, user_id: &str, email: &str) ->
             let _ = sqlx::query("DELETE FROM Tokens WHERE Token = $1").bind(&token).execute(&app.db).await;
         }
     }
-    save_token(app, TOKEN_VERIFY_EMAIL, &extra).await.map_err(|e| AppError::internal("app.recover.save.app_error", e.detailed_error))
+    save_token(app, TOKEN_VERIFY_EMAIL, &extra)
+        .await
+        .map_err(|e| AppError::internal("app.recover.save.app_error", e.detailed_error))
 }
 
 /// `SendEmailVerification`: a verify email to a user who never logged in (no status), a change-verify email
@@ -391,7 +516,11 @@ pub async fn send_email_verification(app: &App, u: &User, new_email: &str, redir
 
 /// `CreatePasswordRecoveryToken`: the user's other recovery tokens go first.
 pub async fn create_password_recovery_token(app: &App, user_id: &str, email: &str) -> ApiResult<String> {
-    let extra = format!(r#"{{"UserId":{},"Email":{}}}"#, serde_json::to_string(user_id).unwrap(), serde_json::to_string(email).unwrap());
+    let extra = format!(
+        r#"{{"UserId":{},"Email":{}}}"#,
+        serde_json::to_string(user_id).unwrap(),
+        serde_json::to_string(email).unwrap()
+    );
     let rows: Vec<(String, String)> = sqlx::query_as("SELECT Token, COALESCE(Extra, '') FROM Tokens WHERE Type = $1")
         .bind(TOKEN_PASSWORD_RECOVERY)
         .fetch_all(&app.db)
@@ -402,7 +531,9 @@ pub async fn create_password_recovery_token(app: &App, user_id: &str, email: &st
             let _ = sqlx::query("DELETE FROM Tokens WHERE Token = $1").bind(&token).execute(&app.db).await;
         }
     }
-    save_token(app, TOKEN_PASSWORD_RECOVERY, &extra).await.map_err(|e| AppError::internal("app.recover.save.app_error", e.detailed_error))
+    save_token(app, TOKEN_PASSWORD_RECOVERY, &extra)
+        .await
+        .map_err(|e| AppError::internal("app.recover.save.app_error", e.detailed_error))
 }
 
 // ---------- rate limits ----------
@@ -540,17 +671,51 @@ pub async fn send_invites(app: &App, d: InviteData<'_>) -> Result<Vec<(String, S
     let with_channels = !d.channels.is_empty();
     let count = d.channels.len().to_string();
     let (subject, title_base, category) = if !with_channels {
-        let s = tl(&server, "api.templates.invite_subject", &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name), ("SiteName", &sn)]);
-        let t = tl(&server, "api.templates.invite_body.title", &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name)]);
+        let s = tl(
+            &server,
+            "api.templates.invite_subject",
+            &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name), ("SiteName", &sn)],
+        );
+        let t = tl(
+            &server,
+            "api.templates.invite_body.title",
+            &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name)],
+        );
         (s, t, "InviteEmail")
     } else if d.channels.len() == 1 {
         let ch = &d.channels[0].1;
-        let s = tl(&server, "api.templates.invite_team_and_channel_subject", &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name), ("ChannelName", ch), ("SiteName", &sn)]);
-        let t = tl(&server, "api.templates.invite_team_and_channel_body.title", &[("SenderName", &d.sender_name), ("ChannelName", ch), ("TeamDisplayName", &d.team.display_name)]);
+        let s = tl(
+            &server,
+            "api.templates.invite_team_and_channel_subject",
+            &[
+                ("SenderName", &d.sender_name),
+                ("TeamDisplayName", &d.team.display_name),
+                ("ChannelName", ch),
+                ("SiteName", &sn),
+            ],
+        );
+        let t = tl(
+            &server,
+            "api.templates.invite_team_and_channel_body.title",
+            &[("SenderName", &d.sender_name), ("ChannelName", ch), ("TeamDisplayName", &d.team.display_name)],
+        );
         (s, t, "InviteEmailToTeamsAndChannels")
     } else {
-        let s = tl(&server, "api.templates.invite_team_and_channels_subject", &[("SenderName", &d.sender_name), ("TeamDisplayName", &d.team.display_name), ("ChannelsLen", &count), ("SiteName", &sn)]);
-        let t = tl(&server, "api.templates.invite_team_and_channels_body.title", &[("SenderName", &d.sender_name), ("ChannelsLen", &count), ("TeamDisplayName", &d.team.display_name)]);
+        let s = tl(
+            &server,
+            "api.templates.invite_team_and_channels_subject",
+            &[
+                ("SenderName", &d.sender_name),
+                ("TeamDisplayName", &d.team.display_name),
+                ("ChannelsLen", &count),
+                ("SiteName", &sn),
+            ],
+        );
+        let t = tl(
+            &server,
+            "api.templates.invite_team_and_channels_body.title",
+            &[("SenderName", &d.sender_name), ("ChannelsLen", &count), ("TeamDisplayName", &d.team.display_name)],
+        );
         (s, t, "InviteEmailToTeamsAndChannels")
     };
     let _ = category;
@@ -597,7 +762,12 @@ pub async fn send_invites(app: &App, d: InviteData<'_>) -> Result<Vec<(String, S
         let button = if with_channels {
             format!("{site}/signup_user_complete/?d={}&t={}&sbr={sbr}", query_escape(&token_data), query_escape(&token))
         } else {
-            let mut q = [("d", token_data.clone()), ("t", token.clone()), ("md", "email".to_string()), ("sbr", sbr.to_string())];
+            let mut q = [
+                ("d", token_data.clone()),
+                ("t", token.clone()),
+                ("md", "email".to_string()),
+                ("sbr", sbr.to_string()),
+            ];
             format!("{site}/signup_user_complete/?{}", encode_query(&mut q))
         };
         p.insert("ButtonURL".into(), V::from(button));
@@ -612,7 +782,13 @@ pub async fn send_invites(app: &App, d: InviteData<'_>) -> Result<Vec<(String, S
             }
             p.insert("Posts".into(), V::List(vec![post_data(&d.sender_name, &message, photo)]));
         }
-        let m = Mail { to: invite.clone(), subject: subject.clone(), html: render_props("invite_body", p), embedded, ..Default::default() };
+        let m = Mail {
+            to: invite.clone(),
+            subject: subject.clone(),
+            html: render_props("invite_body", p),
+            embedded,
+            ..Default::default()
+        };
         if let Err(e) = send_mail(app, m).await {
             eprintln!("Failed to send invite email successfully: {e}");
             if d.error_when_not_sent {
@@ -652,10 +828,21 @@ pub async fn send_guest_invites(
     let sn = site_name(app);
     let message = if message.is_empty() { String::new() } else { strip_tags(message) };
     for invite in invites.iter().filter(|i| !i.is_empty()) {
-        let subject = tl(&server, "api.templates.invite_guest_subject", &[("SenderName", sender_name), ("TeamDisplayName", &team.display_name), ("SiteName", &sn)]);
+        let subject = tl(
+            &server,
+            "api.templates.invite_guest_subject",
+            &[("SenderName", sender_name), ("TeamDisplayName", &team.display_name), ("SiteName", &sn)],
+        );
         let mut p = invite_props(app, sender_name);
         p.insert("SiteURL".into(), V::from(site.clone()));
-        p.insert("Title".into(), V::from(tl(&server, "api.templates.invite_body.title", &[("SenderName", sender_name), ("TeamDisplayName", &team.display_name)])));
+        p.insert(
+            "Title".into(),
+            V::from(tl(
+                &server,
+                "api.templates.invite_body.title",
+                &[("SenderName", sender_name), ("TeamDisplayName", &team.display_name)],
+            )),
+        );
         p.insert("SubTitle".into(), V::from(tl(&server, "api.templates.invite_body_guest.subTitle", &[])));
         p.insert("Message".into(), V::from(message.clone()));
         let mut extra: BTreeMap<String, String> = BTreeMap::new();
@@ -696,7 +883,8 @@ pub async fn send_guest_invites(
             embedded.push(("user-avatar.png".to_string(), img.clone()));
         }
         p.insert("Posts".into(), V::List(vec![post_data(sender_name, &message, photo)]));
-        let m = Mail { to: invite.clone(), subject, html: render_props("invite_body", p), embedded, ..Default::default() };
+        let m =
+            Mail { to: invite.clone(), subject, html: render_props("invite_body", p), embedded, ..Default::default() };
         if let Err(e) = send_mail(app, m).await {
             eprintln!("Failed to send invite email successfully: {e}");
             if error_when_not_sent {
@@ -726,15 +914,14 @@ pub async fn send_magic_link_self_service(app: &App, email: &str) -> Result<(), 
     p.insert("Button".into(), V::from(t("api.templates.invite_body.button")));
     p.insert("InviteFooterTitle".into(), V::from(t("api.templates.guest_magic_link_body.footer.title")));
     p.insert("InviteFooterInfo".into(), V::from(t("api.templates.guest_magic_link_body.footer.info")));
-    let existing: Option<(String, i64)> = sqlx::query_as(
-        "SELECT Token, CreateAt FROM Tokens WHERE Type = $1 AND Extra::jsonb->>'email' = $2 LIMIT 1",
-    )
-    .bind(TOKEN_GUEST_MAGIC_LINK)
-    .bind(email)
-    .fetch_optional(&app.db)
-    .await
-    .ok()
-    .flatten();
+    let existing: Option<(String, i64)> =
+        sqlx::query_as("SELECT Token, CreateAt FROM Tokens WHERE Type = $1 AND Extra::jsonb->>'email' = $2 LIMIT 1")
+            .bind(TOKEN_GUEST_MAGIC_LINK)
+            .bind(email)
+            .fetch_optional(&app.db)
+            .await
+            .ok()
+            .flatten();
     let token = match existing {
         // Token.IsExpired: 48 hours.
         Some((t, at)) if now_ms() <= at + 48 * 3_600_000 => t,
@@ -796,7 +983,20 @@ pub fn post_time(u: &User, create_at: i64, military: bool, locale: &str) -> Post
     };
     let tz: chrono_tz::Tz = pref.parse().unwrap_or_else(|_| local_tz());
     let t = tz.timestamp_opt(create_at / 1000, 0).single().unwrap_or_else(|| tz.timestamp_opt(0, 0).unwrap());
-    let months = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    let months = [
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+    ];
     let (hour, period) = if military {
         (format!("{:02}", t.hour()), String::new())
     } else {
@@ -846,12 +1046,18 @@ pub async fn message_for_notification(app: &App, post: &Post, team_name: &str, l
     } else {
         "api.post.get_message_for_notification.files_sent"
     };
-    let filenames = html_escape::encode_safe(&names.join(", ")).replace("&quot;", "&#34;").replace("&#x27;", "&#39;").replace("&#x2F;", "/");
-    tl(locale, id, &[("Count", &names.len().to_string()), ("Filenames", &filenames)]).replace("[[", "<strong>").replace("]]", "</strong>")
+    let filenames = html_escape::encode_safe(&names.join(", "))
+        .replace("&quot;", "&#34;")
+        .replace("&#x27;", "&#39;")
+        .replace("&#x2F;", "/");
+    tl(locale, id, &[("Count", &names.len().to_string()), ("Filenames", &filenames)])
+        .replace("[[", "<strong>")
+        .replace("]]", "</strong>")
 }
 
 fn is_image(mime: &str, ext: &str) -> bool {
-    mime.starts_with("image") || matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg" | "gif" | "bmp" | "png" | "tiff" | "tif" | "webp")
+    mime.starts_with("image")
+        || matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg" | "gif" | "bmp" | "png" | "tiff" | "tif" | "webp")
 }
 
 /// `url.QueryUnescape`, the name unchanged when it is not escaped right.
@@ -973,7 +1179,13 @@ fn truncate_name(name: &str, n: usize) -> String {
 }
 
 /// `sendNotificationEmail`: batched when the user wants it, otherwise one email per post.
-pub async fn send_notification_email(app: &App, n: &PostNotification, user: &User, team: crate::model::Team, sender_image: Option<Vec<u8>>) -> Result<(), String> {
+pub async fn send_notification_email(
+    app: &App,
+    n: &PostNotification,
+    user: &User,
+    team: crate::model::Team,
+    sender_image: Option<Vec<u8>>,
+) -> Result<(), String> {
     let c = &n.channel;
     let post = &n.post;
     let mut team = team;
@@ -991,7 +1203,11 @@ pub async fn send_notification_email(app: &App, n: &PostNotification, user: &Use
         if !found {
             team = match teams.into_iter().next() {
                 Some(t) => t,
-                None => crate::model::Team { name: "select_team".into(), display_name: site_name(app), ..Default::default() },
+                None => crate::model::Team {
+                    name: "select_team".into(),
+                    display_name: site_name(app),
+                    ..Default::default()
+                },
             };
         }
     }
@@ -1013,24 +1229,46 @@ pub async fn send_notification_email(app: &App, n: &PostNotification, user: &Use
     let pt = post_time(user, post.create_at, military, locale);
     let date = [("Month", pt.month.as_str()), ("Day", pt.day.as_str()), ("Year", pt.year.as_str())];
     let subject = match c.r#type.as_str() {
-        channel::DIRECT => tl(locale, "app.notification.subject.direct.full", &[&[("SiteName", sn.as_str()), ("SenderDisplayName", &sender_name)][..], &date[..]].concat()),
-        channel::GROUP => tl(locale, "app.notification.subject.group_message.full", &[&[("SiteName", sn.as_str()), ("ChannelName", &channel_name)][..], &date[..]].concat()),
+        channel::DIRECT => tl(
+            locale,
+            "app.notification.subject.direct.full",
+            &[&[("SiteName", sn.as_str()), ("SenderDisplayName", &sender_name)][..], &date[..]].concat(),
+        ),
+        channel::GROUP => tl(
+            locale,
+            "app.notification.subject.group_message.full",
+            &[&[("SiteName", sn.as_str()), ("ChannelName", &channel_name)][..], &date[..]].concat(),
+        ),
         _ => {
             let team_name = if app.cfg.bool("EmailSettings.UseChannelInEmailNotifications") {
                 format!("{} ({channel_name})", team.display_name)
             } else {
                 team.display_name.clone()
             };
-            tl(locale, "app.notification.subject.notification.full", &[&[("SiteName", sn.as_str()), ("TeamName", &team_name)][..], &date[..]].concat())
+            tl(
+                locale,
+                "app.notification.subject.notification.full",
+                &[&[("SiteName", sn.as_str()), ("TeamName", &team_name)][..], &date[..]].concat(),
+            )
         }
     };
     let sname = [("SenderName", sender_name.as_str())];
     let (mut title, mut subtitle) = match c.r#type.as_str() {
-        channel::DIRECT => (tl(locale, "app.notification.body.dm.title", &sname), tl(locale, "app.notification.body.dm.subTitle", &sname)),
-        channel::GROUP => (tl(locale, "app.notification.body.group.title", &sname), tl(locale, "app.notification.body.group.subTitle", &sname)),
+        channel::DIRECT => (
+            tl(locale, "app.notification.body.dm.title", &sname),
+            tl(locale, "app.notification.body.dm.subTitle", &sname),
+        ),
+        channel::GROUP => (
+            tl(locale, "app.notification.body.group.title", &sname),
+            tl(locale, "app.notification.body.group.subTitle", &sname),
+        ),
         _ => (
             tl(locale, "app.notification.body.mention.title", &sname),
-            tl(locale, "app.notification.body.mention.subTitle", &[("SenderName", &sender_name), ("ChannelName", &channel_name)]),
+            tl(
+                locale,
+                "app.notification.body.mention.subTitle",
+                &[("SenderName", &sender_name), ("ChannelName", &channel_name)],
+            ),
         ),
     };
     if !post.root_id.is_empty() && app.is_crt_enabled(&user.id).await {
@@ -1038,7 +1276,11 @@ pub async fn send_notification_email(app: &App, n: &PostNotification, user: &Use
         subtitle = match c.r#type.as_str() {
             channel::DIRECT => tl(locale, "app.notification.body.thread_dm.subTitle", &sname),
             channel::GROUP => tl(locale, "app.notification.body.thread_gm.subTitle", &sname),
-            _ => tl(locale, "app.notification.body.thread_channel_full.subTitle", &[("SenderName", &sender_name), ("ChannelName", &channel_name)]),
+            _ => tl(
+                locale,
+                "app.notification.body.thread_channel_full.subTitle",
+                &[("SenderName", &sender_name), ("ChannelName", &channel_name)],
+            ),
         };
     }
     let site = site_url(app);
@@ -1058,7 +1300,11 @@ pub async fn send_notification_email(app: &App, n: &PostNotification, user: &Use
     pdata.insert("SenderPhoto".to_string(), V::from(photo));
     if !message_html.is_empty() {
         pdata.insert("Message".to_string(), V::Html(message_html.clone()));
-        let time = tl(locale, "app.notification.body.dm.time", &[("Hour", &pt.hour), ("Minute", &pt.minute), ("TimeZone", &pt.zone)]);
+        let time = tl(
+            locale,
+            "app.notification.body.dm.time",
+            &[("Hour", &pt.hour), ("Minute", &pt.minute), ("TimeZone", &pt.zone)],
+        );
         pdata.insert("Time".to_string(), V::from(time));
         pdata.insert("MessageAttachments".to_string(), attachments_data(post, &site));
     }
@@ -1148,7 +1394,10 @@ pub fn spawn_batching(app: State) {
                     pending.remove(&uid);
                     continue;
                 }
-                let interval: i64 = pref(&app, &uid, "notifications", "email_interval").await.and_then(|v| v.parse().ok()).unwrap_or(900);
+                let interval: i64 = pref(&app, &uid, "notifications", "email_interval")
+                    .await
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(900);
                 let start = list[0].post.create_at;
                 if now_ms() - start <= interval * 1000 {
                     continue;
@@ -1196,12 +1445,24 @@ async fn send_batched(app: &App, user_id: &str, list: Vec<Batched>) {
             embedded.push((photo.clone(), app.profile_image(s).await.0));
         }
         let pt = post_time(&user, b.post.create_at, military, locale);
-        let time = tl(locale, "api.email_batching.send_batched_email_notification.time", &[("Hour", &pt.hour), ("Minute", &pt.minute), ("TimeZone", &pt.zone), ("Month", &pt.month), ("Day", &pt.day), ("Year", &pt.year)]);
+        let time = tl(
+            locale,
+            "api.email_batching.send_batched_email_notification.time",
+            &[
+                ("Hour", &pt.hour),
+                ("Minute", &pt.minute),
+                ("TimeZone", &pt.zone),
+                ("Month", &pt.month),
+                ("Day", &pt.day),
+                ("Year", &pt.year),
+            ],
+        );
         let mut channel_name = c.display_name.clone();
         let mut show_icon = true;
         let mut others = 0i64;
         if crt && !b.post.root_id.is_empty() {
-            channel_name = tl(locale, "api.push_notification.title.collapsed_threads", &[("channelName", &channel_name)]);
+            channel_name =
+                tl(locale, "api.push_notification.title.collapsed_threads", &[("channelName", &channel_name)]);
             if c.r#type == channel::DIRECT {
                 channel_name = t("api.push_notification.title.collapsed_threads_dm");
             }
@@ -1213,7 +1474,10 @@ async fn send_batched(app: &App, user_id: &str, list: Vec<Batched>) {
         }
         let mut m = BTreeMap::new();
         m.insert("SenderPhoto".to_string(), V::from(photo));
-        m.insert("SenderName".to_string(), V::from(truncate_name(&sender.map(|s| s.display_name(&format)).unwrap_or_default(), 22)));
+        m.insert(
+            "SenderName".to_string(),
+            V::from(truncate_name(&sender.map(|s| s.display_name(&format)).unwrap_or_default(), 22)),
+        );
         m.insert("Time".to_string(), V::from(time));
         m.insert("ChannelName".to_string(), V::from(channel_name));
         m.insert("Message".to_string(), V::Html(message_for_notification(app, &b.post, &b.team_name, locale).await));
@@ -1225,10 +1489,21 @@ async fn send_batched(app: &App, user_id: &str, list: Vec<Batched>) {
     }
     let pt = post_time(&user, list[0].post.create_at, military, locale);
     let count = list.len().to_string();
-    let subject = tl(locale, "api.email_batching.send_batched_email_notification.subject", &[("Count", &count), ("SiteName", &site_name(app)), ("Year", &pt.year), ("Month", &pt.month), ("Day", &pt.day)]);
+    let subject = tl(
+        locale,
+        "api.email_batching.send_batched_email_notification.subject",
+        &[("Count", &count), ("SiteName", &site_name(app)), ("Year", &pt.year), ("Month", &pt.month), ("Day", &pt.day)],
+    );
     let mut p = template_props(app, locale);
     p.insert("SiteURL".into(), V::from(site.clone()));
-    p.insert("Title".into(), V::from(tl(locale, "api.email_batching.send_batched_email_notification.title", &[("Count", &(list.len() - 1).to_string())])));
+    p.insert(
+        "Title".into(),
+        V::from(tl(
+            locale,
+            "api.email_batching.send_batched_email_notification.title",
+            &[("Count", &(list.len() - 1).to_string())],
+        )),
+    );
     p.insert("SubTitle".into(), V::from(t("api.email_batching.send_batched_email_notification.subTitle")));
     p.insert("Button".into(), V::from(t("api.email_batching.send_batched_email_notification.button")));
     p.insert("ButtonURL".into(), V::from(site));
@@ -1237,7 +1512,13 @@ async fn send_batched(app: &App, user_id: &str, list: Vec<Batched>) {
     p.insert("NotificationFooterTitle".into(), V::from(t("app.notification.footer.title")));
     p.insert("NotificationFooterInfoLogin".into(), V::from(t("app.notification.footer.infoLogin")));
     p.insert("NotificationFooterInfo".into(), V::from(t("app.notification.footer.info")));
-    let m = Mail { to: user.email.clone(), subject, html: render_props("messages_notification", p), embedded, ..Default::default() };
+    let m = Mail {
+        to: user.email.clone(),
+        subject,
+        html: render_props("messages_notification", p),
+        embedded,
+        ..Default::default()
+    };
     if let Err(e) = send_mail(app, m).await {
         eprintln!("Unable to send batched email notification email={} err={e}", user.email);
     }

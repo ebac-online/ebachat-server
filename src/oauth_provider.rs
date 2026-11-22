@@ -10,15 +10,17 @@
 
 use std::sync::Arc;
 
+use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{Request, State as St};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::Router;
 use serde::{Deserialize, Serialize};
 
-use crate::app::{ApiResult, App, AppError, Auth, MaybeAuth, State, decode_json, is_valid_id, map_from_json, new_id, now_ms};
+use crate::app::{
+    ApiResult, App, AppError, Auth, MaybeAuth, State, decode_json, is_valid_id, map_from_json, new_id, now_ms,
+};
 use crate::db::Table;
 use crate::gourl::{self, Url};
 use crate::model::{Session, User};
@@ -200,7 +202,8 @@ impl AuthData {
         if self.code_challenge_method != "S256" {
             return false;
         }
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes())) == self.code_challenge
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(sha2::Sha256::digest(verifier.as_bytes()))
+            == self.code_challenge
     }
 
     /// `ValidatePKCEForClientType`.
@@ -308,7 +311,11 @@ impl OAuthApp {
             return Ok(());
         }
         if !subtle_eq(self.client_secret.as_bytes(), secret.as_bytes()) {
-            return Err(AppError::new(StatusCode::UNAUTHORIZED, "model.oauth.validate_grant.credentials.app_error", ""));
+            return Err(AppError::new(
+                StatusCode::UNAUTHORIZED,
+                "model.oauth.validate_grant.credentials.app_error",
+                "",
+            ));
         }
         Ok(())
     }
@@ -348,7 +355,9 @@ impl App {
         .await
         .map_err(|e| AppError::internal("app.session.save.app_error", e.to_string()))?;
         for s in old {
-            self.revoke_session(&s).await.map_err(|e| AppError::internal("app.session.save.app_error", e.detailed_error))?;
+            self.revoke_session(&s)
+                .await
+                .map_err(|e| AppError::internal("app.session.save.app_error", e.detailed_error))?;
         }
         Ok(())
     }
@@ -629,7 +638,9 @@ impl App {
         .bind(client_id)
         .fetch_optional(&self.db)
         .await
-        .map_err(|e| AppError::bad_request("api.oauth.get_access_token.internal.app_error", "").detail(e.to_string()))?;
+        .map_err(|e| {
+            AppError::bad_request("api.oauth.get_access_token.internal.app_error", "").detail(e.to_string())
+        })?;
         if let Some(prev) = prev {
             if prev.is_expired() {
                 return self.new_session_update_token(app, prev, user, audience).await;
@@ -670,13 +681,14 @@ impl App {
     /// `handleRefreshTokenGrant`.
     async fn refresh_grant(&self, app: &OAuthApp, refresh_token: &str, resource: &str) -> ApiResult<AccessResponse> {
         app.validate_grant(GRANT_REFRESH, &app.client_secret, "")?;
-        let ad: AccessData = sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCESS_SELECT} WHERE RefreshToken = $1 LIMIT 1")))
-            .bind(refresh_token)
-            .fetch_optional(&self.db)
-            .await
-            .ok()
-            .flatten()
-            .ok_or_else(|| AppError::not_found("api.oauth.get_access_token.refresh_token.app_error", ""))?;
+        let ad: AccessData =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("{ACCESS_SELECT} WHERE RefreshToken = $1 LIMIT 1")))
+                .bind(refresh_token)
+                .fetch_optional(&self.db)
+                .await
+                .ok()
+                .flatten()
+                .ok_or_else(|| AppError::not_found("api.oauth.get_access_token.refresh_token.app_error", ""))?;
         if ad.client_id != app.id {
             return Err(bad("api.oauth.get_access_token.client_id_mismatch.app_error"));
         }
@@ -743,12 +755,15 @@ impl App {
         if !self.oauth_enabled() {
             return Err(turned_off("api.oauth.allow_oauth.turn_off.app_error"));
         }
-        let tokens: Vec<(String,)> = sqlx::query_as("SELECT Token FROM OAuthAccessData WHERE UserId = $1 AND ClientId = $2")
-            .bind(user_id)
-            .bind(app_id)
-            .fetch_all(&self.db)
-            .await
-            .map_err(|e| AppError::internal("app.oauth.get_access_data_by_user_for_app.app_error", e.to_string()))?;
+        let tokens: Vec<(String,)> =
+            sqlx::query_as("SELECT Token FROM OAuthAccessData WHERE UserId = $1 AND ClientId = $2")
+                .bind(user_id)
+                .bind(app_id)
+                .fetch_all(&self.db)
+                .await
+                .map_err(|e| {
+                    AppError::internal("app.oauth.get_access_data_by_user_for_app.app_error", e.to_string())
+                })?;
         for (token,) in tokens {
             self.revoke_oauth_access_token(&token).await?;
         }
@@ -776,12 +791,15 @@ impl App {
                 .await
                 .ok()
                 .flatten();
-        let removed = sqlx::query("DELETE FROM Sessions WHERE Id = $1 OR Token = $1").bind(token).execute(&self.db).await;
+        let removed =
+            sqlx::query("DELETE FROM Sessions WHERE Id = $1 OR Token = $1").bind(token).execute(&self.db).await;
         let found: Option<(String,)> = sqlx::query_as("SELECT Token FROM OAuthAccessData WHERE Token = $1")
             .bind(token)
             .fetch_optional(&self.db)
             .await
-            .map_err(|e| AppError::bad_request("api.oauth.revoke_access_token.get.app_error", "").detail(e.to_string()))?;
+            .map_err(|e| {
+                AppError::bad_request("api.oauth.revoke_access_token.get.app_error", "").detail(e.to_string())
+            })?;
         if found.is_none() {
             return Err(AppError::bad_request("api.oauth.revoke_access_token.get.app_error", ""));
         }
@@ -790,7 +808,8 @@ impl App {
             .execute(&self.db)
             .await
             .map_err(|e| AppError::internal("api.oauth.revoke_access_token.del_token.app_error", e.to_string()))?;
-        removed.map_err(|e| AppError::internal("api.oauth.revoke_access_token.del_session.app_error", e.to_string()))?;
+        removed
+            .map_err(|e| AppError::internal("api.oauth.revoke_access_token.del_session.app_error", e.to_string()))?;
         self.caches.session.remove(token);
         // Its websockets stop getting events, as Go's `InvalidateCache` then `IsBasicAuthenticated` do.
         self.hub.invalidate_session(token);
@@ -900,7 +919,8 @@ async fn authorize_page_inner(app: &State, s: Option<Arc<Session>>, headers: &He
     };
     if let Err(e) = r.check() {
         let status = StatusCode::from_u16(e.status_code).unwrap_or(StatusCode::BAD_REQUEST);
-        return crate::web::render_web_error(app, status, &[("type", "oauth_invalid_param"), ("message", &e.message)]).await;
+        return crate::web::render_web_error(app, status, &[("type", "oauth_invalid_param"), ("message", &e.message)])
+            .await;
     }
     let oauth_app = match app.oauth_app(&r.client_id).await {
         Ok(a) => a,
@@ -927,7 +947,10 @@ async fn authorize_page_inner(app: &State, s: Option<Arc<Session>>, headers: &He
         return crate::web::render_web_error(
             app,
             StatusCode::BAD_REQUEST,
-            &[("type", "oauth_pkce_required"), ("message", "PKCE is required for public clients using authorization code flow")],
+            &[
+                ("type", "oauth_pkce_required"),
+                ("message", "PKCE is required for public clients using authorization code flow"),
+            ],
         )
         .await;
     }
@@ -944,10 +967,18 @@ async fn authorize_page_inner(app: &State, s: Option<Arc<Session>>, headers: &He
     crate::audit::log(app, Some(&s), "success").await;
     // The client's page asks the user (`http.ServeFile` of root.html).
     let file = crate::web::client_dir().join("root.html");
-    let mut r = crate::web::serve_file(&file, headers, req.method() == axum::http::Method::HEAD, Some("text/html; charset=utf-8")).await;
+    let mut r = crate::web::serve_file(
+        &file,
+        headers,
+        req.method() == axum::http::Method::HEAD,
+        Some("text/html; charset=utf-8"),
+    )
+    .await;
     let h = r.headers_mut();
     h.insert("x-frame-options", HeaderValue::from_static("SAMEORIGIN"));
-    if let Ok(v) = HeaderValue::from_str(format!("frame-ancestors 'self' {}", app.cfg.str("ServiceSettings.FrameAncestors")).trim_end()) {
+    if let Ok(v) = HeaderValue::from_str(
+        format!("frame-ancestors 'self' {}", app.cfg.str("ServiceSettings.FrameAncestors")).trim_end(),
+    ) {
         h.insert(header::CONTENT_SECURITY_POLICY, v);
     }
     h.insert(header::CACHE_CONTROL, HeaderValue::from_static("no-cache, max-age=31556926"));

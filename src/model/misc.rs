@@ -227,4 +227,3 @@ pub struct Bot {
     pub update_at: i64,
     pub delete_at: i64,
 }
-

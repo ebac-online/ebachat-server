@@ -139,9 +139,31 @@ fn has_docs_static_ext(name: &str) -> bool {
     let ext = base.rfind('.').map(|i| base[i..].to_ascii_lowercase()).unwrap_or_default();
     matches!(
         ext.as_str(),
-        ".html" | ".htm" | ".css" | ".js" | ".mjs" | ".map" | ".json" | ".png" | ".jpg" | ".jpeg" | ".gif" | ".svg"
-            | ".webp" | ".ico" | ".avif" | ".woff" | ".woff2" | ".ttf" | ".eot" | ".otf" | ".mp4" | ".webm" | ".txt"
-            | ".xml" | ".pdf"
+        ".html"
+            | ".htm"
+            | ".css"
+            | ".js"
+            | ".mjs"
+            | ".map"
+            | ".json"
+            | ".png"
+            | ".jpg"
+            | ".jpeg"
+            | ".gif"
+            | ".svg"
+            | ".webp"
+            | ".ico"
+            | ".avif"
+            | ".woff"
+            | ".woff2"
+            | ".ttf"
+            | ".eot"
+            | ".otf"
+            | ".mp4"
+            | ".webm"
+            | ".txt"
+            | ".xml"
+            | ".pdf"
     )
 }
 
@@ -207,7 +229,14 @@ async fn docs_redirect(req: Request) -> Response {
     r
 }
 
-async fn serve_static(dir: PathBuf, rel: &str, req_path: &str, headers: &HeaderMap, head: bool, gzip: bool) -> Response {
+async fn serve_static(
+    dir: PathBuf,
+    rel: &str,
+    req_path: &str,
+    headers: &HeaderMap,
+    head: bool,
+    gzip: bool,
+) -> Response {
     if req_path.ends_with('/') {
         return not_found();
     }
@@ -239,9 +268,13 @@ async fn serve_static(dir: PathBuf, rel: &str, req_path: &str, headers: &HeaderM
     }
     // Go's file server answers every method as GET, so only HEAD stays plain.
     let enc = crate::compress::select(&Method::GET, headers);
-    let len = r.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
+    let len =
+        r.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()).and_then(|v| v.parse::<usize>().ok());
     // `gzhttp.DefaultMinSize`: smaller bodies go out as they are.
-    if !(enc != Enc::None && len.is_some_and(|l| l >= crate::compress::MIN_SIZE) && crate::compress::content_type_ok(&ct)) {
+    if !(enc != Enc::None
+        && len.is_some_and(|l| l >= crate::compress::MIN_SIZE)
+        && crate::compress::content_type_ok(&ct))
+    {
         return r;
     }
     let mtime = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
@@ -257,7 +290,12 @@ async fn serve_static(dir: PathBuf, rel: &str, req_path: &str, headers: &HeaderM
 /// `http.ServeFile`/`http.ServeContent` for one file: `Last-Modified`, the preconditions of RFC 7232 (no ETag),
 /// and byte ranges (one range as a 206 with `Content-Range`, several as `multipart/byteranges`). `content_type`
 /// is what the handler set before; without one, Go's type for the extension.
-pub async fn serve_file(file: &std::path::Path, headers: &HeaderMap, head: bool, content_type: Option<&str>) -> Response {
+pub async fn serve_file(
+    file: &std::path::Path,
+    headers: &HeaderMap,
+    head: bool,
+    content_type: Option<&str>,
+) -> Response {
     let Ok(meta) = tokio::fs::metadata(file).await else { return not_found() };
     if meta.is_dir() {
         return not_found();
@@ -337,7 +375,9 @@ pub async fn serve_file(file: &std::path::Path, headers: &HeaderMap, head: bool,
             for (i, (start, len)) in ranges.iter().enumerate() {
                 let sep = if i == 0 { "" } else { "\r\n" };
                 let end = start + len - 1;
-                let head = format!("{sep}--{boundary}\r\nContent-Range: bytes {start}-{end}/{size}\r\nContent-Type: {ct}\r\n\r\n");
+                let head = format!(
+                    "{sep}--{boundary}\r\nContent-Range: bytes {start}-{end}/{size}\r\nContent-Type: {ct}\r\n\r\n"
+                );
                 out.extend_from_slice(head.as_bytes());
                 out.extend_from_slice(&data[*start as usize..(*start + *len) as usize]);
             }
@@ -469,6 +509,11 @@ async fn static_files(Path(rel): Path<String>, req: Request) -> Response {
 }
 
 async fn static_plugins(AxState(app): AxState<State>, Path(rel): Path<String>, req: Request) -> Response {
+    let head = req.method() == Method::HEAD;
+    // An active plugin's webapp, served from its bundle.
+    if let Some((dir, file)) = crate::plugins::http::webapp_file(&rel) {
+        return serve(dir, &file, req.uri().path(), req.headers(), head).await;
+    }
     let dir = match app.cfg.str("PluginSettings.ClientDirectory") {
         "" => "./client/plugins".to_string(),
         d => d.to_string(),
@@ -570,7 +615,10 @@ fn content_security_policy(app: &App) -> String {
         String::new()
     } else {
         let script = format!("window.publicPath='{sub}/static/'");
-        format!(" 'sha256-{}'", base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(script.as_bytes())))
+        format!(
+            " 'sha256-{}'",
+            base64::engine::general_purpose::STANDARD.encode(sha2::Sha256::digest(script.as_bytes()))
+        )
     };
     let mut dev = String::new();
     for kv in app.cfg.str("ServiceSettings.DeveloperFlags").split(',').filter(|s| !s.is_empty()) {

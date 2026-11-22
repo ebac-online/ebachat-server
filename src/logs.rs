@@ -119,9 +119,14 @@ pub fn configure(cfg: &Value) {
     let ls = &cfg["LogSettings"];
     let b = |k: &str| ls[k].as_bool().unwrap_or(false);
     let s = |k: &str| ls[k].as_str().unwrap_or("");
-    let console = b("EnableConsole").then(|| level_id(s("ConsoleLevel")).map(|max| Target { max, json: b("ConsoleJson") })).flatten();
+    let console = b("EnableConsole")
+        .then(|| level_id(s("ConsoleLevel")).map(|max| Target { max, json: b("ConsoleJson") }))
+        .flatten();
     let file = b("EnableFile")
-        .then(|| level_id(s("FileLevel")).map(|max| (Target { max, json: b("FileJson") }, file_location(s("FileLocation")), None)))
+        .then(|| {
+            level_id(s("FileLevel"))
+                .map(|max| (Target { max, json: b("FileJson") }, file_location(s("FileLocation")), None))
+        })
         .flatten();
     let max_field = ls["MaxFieldSize"].as_i64().unwrap_or(2048).max(0) as usize;
     *LOGGER.lock().unwrap() = Some(Logger { console, file, max_field });
@@ -160,13 +165,8 @@ fn truncate(v: &Value, max: usize) -> Value {
 
 fn json_line(ts: &str, level: Level, msg: &str, caller: &str, fields: &[(&str, Value)], max: usize) -> String {
     let q = |s: &str| serde_json::to_string(s).unwrap();
-    let mut out = format!(
-        "{{\"timestamp\":{},\"level\":{},\"msg\":{},\"caller\":{}",
-        q(ts),
-        q(level.name()),
-        q(msg),
-        q(caller)
-    );
+    let mut out =
+        format!("{{\"timestamp\":{},\"level\":{},\"msg\":{},\"caller\":{}", q(ts), q(level.name()), q(msg), q(caller));
     for (k, v) in fields {
         let mut k = k.to_string();
         while ["timestamp", "level", "msg", "stacktrace"].contains(&k.as_str()) {
@@ -211,13 +211,21 @@ pub fn log(level: Level, msg: &str, fields: &[(&str, Value)]) {
     if let Some(t) = &l.console
         && level as usize <= t.max
     {
-        let line = if t.json { json_line(&ts, level, msg, &caller, fields, max) } else { plain_line(&ts, level, msg, &caller, fields, max) };
+        let line = if t.json {
+            json_line(&ts, level, msg, &caller, fields, max)
+        } else {
+            plain_line(&ts, level, msg, &caller, fields, max)
+        };
         eprintln!("{line}");
     }
     if let Some((t, path, file)) = &mut l.file
         && level as usize <= t.max
     {
-        let line = if t.json { json_line(&ts, level, msg, &caller, fields, max) } else { plain_line(&ts, level, msg, &caller, fields, max) };
+        let line = if t.json {
+            json_line(&ts, level, msg, &caller, fields, max)
+        } else {
+            plain_line(&ts, level, msg, &caller, fields, max)
+        };
         if file.is_none() {
             if let Some(d) = path.parent() {
                 let _ = std::fs::create_dir_all(d);
@@ -255,7 +263,8 @@ pub fn debug(msg: &str, fields: &[(&str, Value)]) {
 /// that release, no build date or enterprise hash, and the Rust compiler where Go names its own.
 pub fn initializing() {
     info("Server is initializing...", &[("go_version", env!("EBACHAT_RUSTC_VERSION").into())]);
-    let (version, number, date, hash, hash_ee) = (crate::SERVER_VERSION, crate::SERVER_VERSION, "", crate::BUILD_HASH, "");
+    let (version, number, date, hash, hash_ee) =
+        (crate::SERVER_VERSION, crate::SERVER_VERSION, "", crate::BUILD_HASH, "");
     info(
         &format!("Current version is {version} ({number}/{date}/{hash}/{hash_ee})"),
         &[
@@ -296,7 +305,10 @@ pub async fn startup(app: &crate::app::App) {
         Err(e) => error("Problem with file storage settings", &[("error", e.to_string().into())]),
     }
     if app.cfg.str("EmailSettings.PushNotificationServer").starts_with("http://") {
-        warn("Your push notification server is configured with HTTP. For improved security, update to HTTPS in your configuration.", &[]);
+        warn(
+            "Your push notification server is configured with HTTP. For improved security, update to HTTPS in your configuration.",
+            &[],
+        );
     }
     info("Starting Server...", &[]);
 }
@@ -378,7 +390,11 @@ pub fn read_lines(page: i64, per_page: i64, filter: &Filter) -> Result<Vec<Strin
     if let Err(e) = validate_path(&path, &root_path()) {
         error(
             "Blocked attempt to read log file outside allowed root",
-            &[("path", path.display().to_string().into()), ("config_section", "LogSettings.FileLocation".into()), ("error", e.into())],
+            &[
+                ("path", path.display().to_string().into()),
+                ("config_section", "LogSettings.FileLocation".into()),
+                ("error", e.into()),
+            ],
         );
         return Err(read_err(403));
     }
@@ -423,9 +439,9 @@ pub fn read_lines(page: i64, per_page: i64, filter: &Filter) -> Result<Vec<Strin
 
 // ---------- routes ----------
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::State as St;
-use crate::app::Query;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -488,7 +504,10 @@ async fn query_logs(St(app): St<State>, Auth(s): Auth, Query(q): Q, body: Bytes)
             .filter_map(|l| match serde_json::from_str::<Value>(l) {
                 Ok(v) => Some(v),
                 Err(e) => {
-                    warn("Error parsing log line in Server Logs", &[("from_node", "default".into()), ("error", e.to_string().into())]);
+                    warn(
+                        "Error parsing log line in Server Logs",
+                        &[("from_node", "default".into()), ("error", e.to_string().into())],
+                    );
                     None
                 }
             })
@@ -504,7 +523,8 @@ async fn query_logs(St(app): St<State>, Auth(s): Auth, Query(q): Q, body: Bytes)
 async fn download_logs(St(app): St<State>, Auth(s): Auth) -> ApiResult<Response> {
     app.require_unrestricted(&s, "get_logs").await?;
     let fail = |d: String| {
-        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.system.logs.download_bytes_buffer.app_error", "").detail(d)
+        AppError::new(StatusCode::INTERNAL_SERVER_ERROR, "api.system.logs.download_bytes_buffer.app_error", "")
+            .detail(d)
     };
     let Some(path) = file_path() else {
         return Err(fail("Unable to retrieve mattermost logs because LogSettings.EnableFile is set to false".into()));
@@ -512,24 +532,37 @@ async fn download_logs(St(app): St<State>, Auth(s): Auth) -> ApiResult<Response>
     if let Err(e) = validate_path(&path, &root_path()) {
         error(
             "Blocked attempt to read log file outside allowed root",
-            &[("path", path.display().to_string().into()), ("config_section", "LogSettings.FileLocation".into()), ("error", e.clone().into())],
+            &[
+                ("path", path.display().to_string().into()),
+                ("config_section", "LogSettings.FileLocation".into()),
+                ("error", e.clone().into()),
+            ],
         );
         return Err(fail(format!("log file path {} is outside allowed logging directory: {e}", path.display())));
     }
-    let body = std::fs::read(&path).map_err(|e| fail(format!("failed read mattermost log file at path {}: {e}", path.display())))?;
+    let body = std::fs::read(&path)
+        .map_err(|e| fail(format!("failed read mattermost log file at path {}: {e}", path.display())))?;
     let mut h = HeaderMap::new();
     crate::file_api::file_headers(&mut h, "text/plain", true, LOG_FILENAME);
     if !body.is_empty() && app.cfg.str("ServiceSettings.WebserverMode") == "gzip" {
         h.insert("X-Uncompressed-Content-Length", HeaderValue::from(body.len()));
     }
-    h.insert(header::LAST_MODIFIED, HeaderValue::from_str(&httpdate::fmt_http_date(std::time::SystemTime::now())).unwrap());
+    h.insert(
+        header::LAST_MODIFIED,
+        HeaderValue::from_str(&httpdate::fmt_http_date(std::time::SystemTime::now())).unwrap(),
+    );
     h.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
     Ok((StatusCode::OK, h, body).into_response())
 }
 
 /// `postLog`: a client's message in the server log, at error level for `ERROR` from an admin (or in developer
 /// mode), at debug otherwise.
-async fn post_log(St(app): St<State>, MaybeAuth(s): MaybeAuth, headers: HeaderMap, body: Bytes) -> ApiResult<Json<Value>> {
+async fn post_log(
+    St(app): St<State>,
+    MaybeAuth(s): MaybeAuth,
+    headers: HeaderMap,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     let mut force_debug = false;
     if !app.cfg.bool("ServiceSettings.EnableDeveloper") {
         let Some(s) = &s else { return Err(AppError::forbidden()) };
@@ -537,14 +570,16 @@ async fn post_log(St(app): St<State>, MaybeAuth(s): MaybeAuth, headers: HeaderMa
             force_debug = true;
         }
     }
-    let mut m: serde_json::Map<String, Value> =
-        match serde_json::Deserializer::from_slice(&body).into_iter::<std::collections::BTreeMap<String, String>>().next() {
-            Some(Ok(m)) => m.into_iter().map(|(k, v)| (k, Value::String(v))).collect(),
-            _ => {
-                warn("Error decoding request.", &[]);
-                serde_json::Map::new()
-            }
-        };
+    let mut m: serde_json::Map<String, Value> = match serde_json::Deserializer::from_slice(&body)
+        .into_iter::<std::collections::BTreeMap<String, String>>()
+        .next()
+    {
+        Some(Ok(m)) => m.into_iter().map(|(k, v)| (k, Value::String(v))).collect(),
+        _ => {
+            warn("Error decoding request.", &[]);
+            serde_json::Map::new()
+        }
+    };
     let level = m.get("level").and_then(Value::as_str).unwrap_or("").to_string();
     let mut msg = m.get("message").and_then(Value::as_str).unwrap_or("").to_string();
     if msg.len() > 400 {
@@ -558,8 +593,12 @@ async fn post_log(St(app): St<State>, MaybeAuth(s): MaybeAuth, headers: HeaderMa
     let msg = format!("Client Logs API Endpoint Message: {msg}");
     let (sid, uid) = s.as_ref().map_or((String::new(), String::new()), |s| (s.id.clone(), s.user_id.clone()));
     let ua = headers.get(header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("");
-    let fields: [(&str, Value); 4] =
-        [("type", "client_message".into()), ("user_agent", ua.into()), ("session_id", sid.into()), ("user_id", uid.into())];
+    let fields: [(&str, Value); 4] = [
+        ("type", "client_message".into()),
+        ("user_agent", ua.into()),
+        ("session_id", sid.into()),
+        ("user_id", uid.into()),
+    ];
     if !force_debug && level == "ERROR" {
         error(&msg, &fields);
     } else {

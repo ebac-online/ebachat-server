@@ -119,7 +119,8 @@ const HPNS: &[&str] = &[
 
 /// `canSendPushNotifications`: on, and not a hosted server (no license here).
 pub fn can_send(app: &App) -> bool {
-    app.cfg.bool("EmailSettings.SendPushNotifications") && !HPNS.contains(&app.cfg.str("EmailSettings.PushNotificationServer"))
+    app.cfg.bool("EmailSettings.SendPushNotifications")
+        && !HPNS.contains(&app.cfg.str("EmailSettings.PushNotificationServer"))
 }
 
 // ---------- names ----------
@@ -165,8 +166,12 @@ impl PostNotification {
         match self.channel.r#type.as_str() {
             channel::DIRECT => display_name_prefixed(&self.sender, format, "@"),
             channel::GROUP => {
-                let mut names: Vec<String> =
-                    self.profiles.values().filter(|u| u.id != exclude).map(|u| display_name_prefixed(u, format, "")).collect();
+                let mut names: Vec<String> = self
+                    .profiles
+                    .values()
+                    .filter(|u| u.id != exclude)
+                    .map(|u| display_name_prefixed(u, format, ""))
+                    .collect();
                 names.sort();
                 names.join(", ")
             }
@@ -192,7 +197,13 @@ impl PostNotification {
 // ---------- the decision ----------
 
 /// `doesNotifyPropsAllowPushNotification`: "" when allowed, the reason otherwise.
-fn notify_props_allow(user: &User, cprops: Option<&StringMap>, post: &Post, mentioned: bool, is_gm: bool) -> &'static str {
+fn notify_props_allow(
+    user: &User,
+    cprops: Option<&StringMap>,
+    post: &Post,
+    mentioned: bool,
+    is_gm: bool,
+) -> &'static str {
     let cp = |k: &str| cprops.and_then(|p| p.0.get(k)).map(String::as_str).unwrap_or("");
     let user_notify = user.notify_prop("push");
     let mut channel_notify = cp("push");
@@ -242,7 +253,14 @@ pub fn status_allows(user: &User, st: &status::Status, channel_id: &str, crt: bo
 }
 
 /// `ShouldSendPushNotification`.
-pub fn should_send(user: &User, cprops: Option<&StringMap>, mentioned: bool, st: &status::Status, post: &Post, is_gm: bool) -> bool {
+pub fn should_send(
+    user: &User,
+    cprops: Option<&StringMap>,
+    mentioned: bool,
+    st: &status::Status,
+    post: &Post,
+    is_gm: bool,
+) -> bool {
     if user.is_bot {
         return false;
     }
@@ -252,7 +270,8 @@ pub fn should_send(user: &User, cprops: Option<&StringMap>, mentioned: bool, st:
         Some(serde_json::Value::Null) => {}
         Some(_) => return true,
     }
-    notify_props_allow(user, cprops, post, mentioned, is_gm).is_empty() && status_allows(user, st, &post.channel_id, false)
+    notify_props_allow(user, cprops, post, mentioned, is_gm).is_empty()
+        && status_allows(user, st, &post.channel_id, false)
 }
 
 /// `GetStatus`, offline when there is none.
@@ -266,9 +285,24 @@ pub async fn status_or_offline(app: &App, user_id: &str) -> status::Status {
 // ---------- the hub ----------
 
 enum Job {
-    Message { n: Arc<PostNotification>, user: Arc<User>, sender_name: String, channel_name: String, explicit: bool, channel_wide: bool, reply_type: String },
-    Clear { session_id: String, user_id: String, channel_id: String, root_id: String },
-    Badge { user_id: String },
+    Message {
+        n: Arc<PostNotification>,
+        user: Arc<User>,
+        sender_name: String,
+        channel_name: String,
+        explicit: bool,
+        channel_wide: bool,
+        reply_type: String,
+    },
+    Clear {
+        session_id: String,
+        user_id: String,
+        channel_id: String,
+        root_id: String,
+    },
+    Badge {
+        user_id: String,
+    },
 }
 
 static HUB: OnceLock<mpsc::Sender<Job>> = OnceLock::new();
@@ -289,9 +323,21 @@ pub fn spawn(app: State) {
             tokio::spawn(async move {
                 let r = match job {
                     Job::Message { n, user, sender_name, channel_name, explicit, channel_wide, reply_type } => {
-                        send_message_sync(&app, &n, &user, &channel_name, &sender_name, explicit, channel_wide, &reply_type).await
+                        send_message_sync(
+                            &app,
+                            &n,
+                            &user,
+                            &channel_name,
+                            &sender_name,
+                            explicit,
+                            channel_wide,
+                            &reply_type,
+                        )
+                        .await
                     }
-                    Job::Clear { session_id, user_id, channel_id, root_id } => clear_sync(&app, &session_id, &user_id, &channel_id, &root_id).await,
+                    Job::Clear { session_id, user_id, channel_id, root_id } => {
+                        clear_sync(&app, &session_id, &user_id, &channel_id, &root_id).await
+                    }
                     Job::Badge { user_id } => badge_sync(&app, &user_id).await,
                 };
                 if let Err(e) = r {
@@ -310,7 +356,14 @@ async fn enqueue(job: Job) {
 }
 
 /// `sendPushNotification`: the recipient's names, then queued.
-pub async fn send_message(app: &App, n: &Arc<PostNotification>, user: &Arc<User>, explicit: bool, channel_wide: bool, reply_type: &str) {
+pub async fn send_message(
+    app: &App,
+    n: &Arc<PostNotification>,
+    user: &Arc<User>,
+    explicit: bool,
+    channel_wide: bool,
+    reply_type: &str,
+) {
     let format = name_format(app, &user.id).await;
     let channel_name = n.channel_name(&format, &user.id);
     let sender_name = n.sender_name(&format, app.cfg.bool("ServiceSettings.EnablePostUsernameOverride"));
@@ -332,7 +385,13 @@ pub async fn clear(app: &App, session_id: &str, user_id: &str, channel_id: &str,
     if !can_send(app) {
         return;
     }
-    enqueue(Job::Clear { session_id: session_id.into(), user_id: user_id.into(), channel_id: channel_id.into(), root_id: root_id.into() }).await;
+    enqueue(Job::Clear {
+        session_id: session_id.into(),
+        user_id: user_id.into(),
+        channel_id: channel_id.into(),
+        root_id: root_id.into(),
+    })
+    .await;
 }
 
 /// `UpdateMobileAppBadge` (same condition as `clear`).
@@ -352,7 +411,8 @@ async fn badge_count(app: &App, user_id: &str, crt: bool) -> Result<i64, String>
         "SELECT COALESCE(SUM({col}), 0)::bigint FROM Channels c INNER JOIN ChannelMembers cm ON cm.ChannelId = c.Id
          AND cm.UserId = $1 AND c.DeleteAt = 0 WHERE c.Type NOT IN ('S')"
     );
-    let mut n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(q)).bind(user_id).fetch_one(&app.db).await.map_err(|e| e.to_string())?;
+    let mut n: i64 =
+        sqlx::query_scalar(sqlx::AssertSqlSafe(q)).bind(user_id).fetch_one(&app.db).await.map_err(|e| e.to_string())?;
     if crt {
         let t: i64 = sqlx::query_scalar(
             "SELECT COALESCE(SUM(ThreadMemberships.UnreadMentions), 0)::bigint FROM ThreadMemberships
@@ -373,7 +433,17 @@ async fn badge_count(app: &App, user_id: &str, crt: bool) -> Result<i64, String>
 
 /// `getPushNotificationMessage`.
 #[allow(clippy::too_many_arguments)]
-fn message_text(contents: &str, msg: &str, explicit: bool, channel_wide: bool, has_files: bool, sender: &str, ctype: &str, reply: &str, locale: &str) -> String {
+fn message_text(
+    contents: &str,
+    msg: &str,
+    explicit: bool,
+    channel_wide: bool,
+    has_files: bool,
+    sender: &str,
+    ctype: &str,
+    reply: &str,
+    locale: &str,
+) -> String {
     let t = |id: &str| crate::i18n::tl(locale, id, &[]);
     if msg.is_empty() && has_files {
         if ctype == channel::DIRECT {
@@ -451,7 +521,11 @@ pub async fn build_message(
     if crt {
         msg.is_crt_enabled = true;
         if !post.root_id.is_empty() && contents != "generic_no_channel" {
-            msg.channel_name = crate::i18n::tl(locale, "api.push_notification.title.collapsed_threads", &[("channelName", channel_name)]);
+            msg.channel_name = crate::i18n::tl(
+                locale,
+                "api.push_notification.title.collapsed_threads",
+                &[("channelName", channel_name)],
+            );
             if c.r#type == channel::DIRECT {
                 msg.channel_name = crate::i18n::tl(locale, "api.push_notification.title.collapsed_threads_dm", &[]);
             }
@@ -479,7 +553,17 @@ pub async fn build_message(
             text.push_str(&a.fallback);
         }
     }
-    msg.message = message_text(contents, &text, explicit, channel_wide, !post.file_ids.0.is_empty(), &msg.sender_name, &c.r#type, reply, locale);
+    msg.message = message_text(
+        contents,
+        &text,
+        explicit,
+        channel_wide,
+        !post.file_ids.0.is_empty(),
+        &msg.sender_name,
+        &c.r#type,
+        reply,
+        locale,
+    );
     msg.badge = badge_count(app, &user.id, crt).await?;
     Ok(msg)
 }
@@ -495,7 +579,8 @@ async fn send_message_sync(
     channel_wide: bool,
     reply: &str,
 ) -> Result<(), String> {
-    let msg = build_message(app, &n.post, user, &n.channel, channel_name, sender_name, explicit, channel_wide, reply).await?;
+    let msg =
+        build_message(app, &n.post, user, &n.channel, channel_name, sender_name, explicit, channel_wide, reply).await?;
     send_to_all_sessions(app, msg, &user.id, "").await
 }
 
@@ -518,7 +603,14 @@ async fn clear_sync(app: &App, session_id: &str, user_id: &str, channel_id: &str
 async fn badge_sync(app: &App, user_id: &str) -> Result<(), String> {
     let crt = app.is_crt_enabled(user_id).await;
     let badge = badge_count(app, user_id, crt).await?;
-    let msg = PushNotification { kind: UPDATE_BADGE.into(), version: "v2".into(), sound: "none".into(), content_available: 1, badge, ..Default::default() };
+    let msg = PushNotification {
+        kind: UPDATE_BADGE.into(),
+        version: "v2".into(),
+        sound: "none".into(),
+        content_available: 1,
+        badge,
+        ..Default::default()
+    };
     send_to_all_sessions(app, msg, user_id, "").await
 }
 
@@ -559,7 +651,12 @@ async fn mobile_sessions(app: &App, user_id: &str) -> Result<Vec<Session>, Strin
 }
 
 /// `sendPushNotificationToAllSessions`: a copy per live device, each with its own ack id and signature.
-pub async fn send_to_all_sessions(app: &App, msg: PushNotification, user_id: &str, skip_session: &str) -> Result<(), String> {
+pub async fn send_to_all_sessions(
+    app: &App,
+    msg: PushNotification,
+    user_id: &str,
+    skip_session: &str,
+) -> Result<(), String> {
     let sessions = mobile_sessions(app, user_id).await?;
     for s in sessions {
         if s.is_expired(now_ms()) || (!skip_session.is_empty() && skip_session == s.id) {
@@ -623,7 +720,9 @@ pub async fn send_to_proxy(app: &App, msg: &mut PushNotification, s: &Session) -
             } else {
                 (PROP_LAST_REMOVED_DEVICE, s.device_id.clone())
             };
-            set_session_props(app, s, &[(prop, &value)]).await.map_err(|e| format!("Failed to set extra session properties: {e}"))?;
+            set_session_props(app, s, &[(prop, &value)])
+                .await
+                .map_err(|e| format!("Failed to set extra session properties: {e}"))?;
             app.clear_sessions_for_user(&s.user_id);
             Err(REMOVE_DEVICE.into())
         }
@@ -646,7 +745,12 @@ pub async fn set_session_props(app: &App, s: &Session, props: &[(&str, &str)]) -
         return Ok(());
     }
     let json = serde_json::to_string(&p.0).map_err(|e| e.to_string())?;
-    sqlx::query("UPDATE Sessions SET Props = $1::jsonb WHERE Id = $2").bind(json).bind(&s.id).execute(&app.db).await.map_err(|e| e.to_string())?;
+    sqlx::query("UPDATE Sessions SET Props = $1::jsonb WHERE Id = $2")
+        .bind(json)
+        .bind(&s.id)
+        .execute(&app.db)
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -655,7 +759,13 @@ pub async fn send_test(app: &App, device_id: &str) -> &'static str {
     if !can_send(app) {
         return "false";
     }
-    let mut msg = PushNotification { version: "2".into(), kind: TEST.into(), server_id: app.cfg.diagnostic_id.clone(), badge: -1, ..Default::default() };
+    let mut msg = PushNotification {
+        version: "2".into(),
+        kind: TEST.into(),
+        server_id: app.cfg.diagnostic_id.clone(),
+        badge: -1,
+        ..Default::default()
+    };
     msg.set_device(device_id);
     match raw_send(app, &msg).await {
         Err(_) => "unknown",
@@ -688,7 +798,13 @@ pub async fn wipe(app: &App, sessions: &[Session]) {
         if s.device_id.is_empty() || s.device_id == s.prop(PROP_LAST_REMOVED_DEVICE) {
             continue;
         }
-        let mut msg = PushNotification { version: "v2".into(), kind: SESSION.into(), content_available: 1, sound: "none".into(), ..Default::default() };
+        let mut msg = PushNotification {
+            version: "v2".into(),
+            kind: SESSION.into(),
+            content_available: 1,
+            sound: "none".into(),
+            ..Default::default()
+        };
         msg.set_device(&s.device_id);
         msg.ack_id = new_id();
         let Ok(sig) = sign(app, &msg.ack_id, &msg.device_id, Some(&s.user_id)).await else { continue };
@@ -706,7 +822,13 @@ mod tests {
 
     #[test]
     fn payload_as_go() {
-        let mut m = PushNotification { kind: CLEAR.into(), version: "v2".into(), content_available: 1, badge: 2, ..Default::default() };
+        let mut m = PushNotification {
+            kind: CLEAR.into(),
+            version: "v2".into(),
+            content_available: 1,
+            badge: 2,
+            ..Default::default()
+        };
         m.set_device("android_rn:abc");
         assert_eq!(
             serde_json::to_string(&m).unwrap(),

@@ -47,10 +47,32 @@ fn fnv32a(s: &str) -> u32 {
 /// `createProfileImage`: the first letter of the username, white on a colour picked by the user id.
 pub fn initials_image(username: &str, user_id: &str) -> Vec<u8> {
     const COLORS: [[u8; 3]; 26] = [
-        [197, 8, 126], [227, 207, 18], [28, 181, 105], [35, 188, 224], [116, 49, 196], [197, 8, 126], [197, 19, 19],
-        [250, 134, 6], [227, 207, 18], [123, 201, 71], [28, 181, 105], [35, 188, 224], [116, 49, 196], [197, 8, 126],
-        [197, 19, 19], [250, 134, 6], [227, 207, 18], [123, 201, 71], [28, 181, 105], [35, 188, 224], [116, 49, 196],
-        [197, 8, 126], [197, 19, 19], [250, 134, 6], [227, 207, 18], [123, 201, 71],
+        [197, 8, 126],
+        [227, 207, 18],
+        [28, 181, 105],
+        [35, 188, 224],
+        [116, 49, 196],
+        [197, 8, 126],
+        [197, 19, 19],
+        [250, 134, 6],
+        [227, 207, 18],
+        [123, 201, 71],
+        [28, 181, 105],
+        [35, 188, 224],
+        [116, 49, 196],
+        [197, 8, 126],
+        [197, 19, 19],
+        [250, 134, 6],
+        [227, 207, 18],
+        [123, 201, 71],
+        [28, 181, 105],
+        [35, 188, 224],
+        [116, 49, 196],
+        [197, 8, 126],
+        [197, 19, 19],
+        [250, 134, 6],
+        [227, 207, 18],
+        [123, 201, 71],
     ];
     let c = COLORS[(fnv32a(user_id) as usize) % COLORS.len()];
     let mut img = RgbaImage::from_pixel(SIZE, SIZE, Rgba([c[0], c[1], c[2], 255]));
@@ -134,7 +156,12 @@ fn png(data: Vec<u8>, cache: &str) -> Response {
 }
 
 /// `getProfileImage`: ETag is the picture's update time.
-async fn get_image(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<String>, headers: HeaderMap) -> ApiResult<Response> {
+async fn get_image(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(user_id): Path<String>,
+    headers: HeaderMap,
+) -> ApiResult<Response> {
     let user_id = user_param(&s, &user_id)?;
     if !app.can_see_user(&s, &user_id).await? {
         return Err(AppError::forbidden_perm(crate::perm::VIEW_MEMBERS));
@@ -176,7 +203,11 @@ async fn set_image(
     }
     let length = req.headers().get(header::CONTENT_LENGTH).and_then(|v| v.to_str().ok()?.parse::<i64>().ok());
     if length.is_some_and(|l| l > app.cfg.i64("FileSettings.MaxFileSize")) {
-        return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "api.user.upload_profile_user.too_large.app_error", ""));
+        return Err(AppError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "api.user.upload_profile_user.too_large.app_error",
+            "",
+        ));
     }
     let mut form = Multipart::from_request(req, &app)
         .await
@@ -188,13 +219,22 @@ async fn set_image(
         .map_err(|e| AppError::internal("api.user.upload_profile_user.parse.app_error", e.to_string()))?
     {
         if field.name() == Some("image") {
-            data = Some(field.bytes().await.map_err(|e| AppError::internal("api.user.upload_profile_user.parse.app_error", e.to_string()))?);
+            data = Some(
+                field
+                    .bytes()
+                    .await
+                    .map_err(|e| AppError::internal("api.user.upload_profile_user.parse.app_error", e.to_string()))?,
+            );
             break;
         }
     }
     let data = data.ok_or_else(|| AppError::bad_request("api.user.upload_profile_user.no_file.app_error", ""))?;
     if data.len() as i64 > app.cfg.i64("FileSettings.MaxFileSize") {
-        return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "api.user.upload_profile_user.too_large.app_error", ""));
+        return Err(AppError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "api.user.upload_profile_user.too_large.app_error",
+            "",
+        ));
     }
     let u = app.user(&user_id).await?.ok_or_else(|| AppError::invalid_url_param("user_id"))?;
     // `SetProfileImageFromMultiPartFile`: `checkImageLimits` reads the dimensions first, so a file that is no image
@@ -215,7 +255,9 @@ impl App {
     pub async fn set_profile_image_from_bytes(&self, user_id: &str, data: &[u8]) -> ApiResult<()> {
         let app = self;
         let decode = |e: String| AppError::bad_request("api.user.upload_profile_user.decode.app_error", "").detail(e);
-        let reader = image::ImageReader::new(std::io::Cursor::new(data)).with_guessed_format().map_err(|e| decode(e.to_string()))?;
+        let reader = image::ImageReader::new(std::io::Cursor::new(data))
+            .with_guessed_format()
+            .map_err(|e| decode(e.to_string()))?;
         let (w, h) = reader.into_dimensions().map_err(|e| decode(e.to_string()))?;
         let max_res = app.cfg.i64("FileSettings.MaxImageResolution");
         if max_res > 0 && (w as i64) * (h as i64) > max_res {
@@ -238,7 +280,11 @@ impl App {
             .await
             .map_err(|e| AppError::internal("api.user.upload_profile_user.upload_profile.app_error", e.to_string()))?;
         let now = now_ms();
-        sqlx::query("UPDATE Users SET LastPictureUpdate = $1, UpdateAt = $1 WHERE Id = $2").bind(now).bind(user_id).execute(&app.db).await?;
+        sqlx::query("UPDATE Users SET LastPictureUpdate = $1, UpdateAt = $1 WHERE Id = $2")
+            .bind(now)
+            .bind(user_id)
+            .execute(&app.db)
+            .await?;
         app.publish_user_updated(user_id).await;
         Ok(())
     }
@@ -279,7 +325,11 @@ fn exif_orientation(d: &[u8]) -> Option<u16> {
             };
             let u32_at = |o: usize| -> Option<u32> {
                 let b = t.get(o..o + 4)?;
-                Some(if le { u32::from_le_bytes([b[0], b[1], b[2], b[3]]) } else { u32::from_be_bytes([b[0], b[1], b[2], b[3]]) })
+                Some(if le {
+                    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
+                } else {
+                    u32::from_be_bytes([b[0], b[1], b[2], b[3]])
+                })
             };
             let ifd = u32_at(4)? as usize;
             let n = u16_at(ifd)? as usize;

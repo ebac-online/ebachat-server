@@ -59,10 +59,19 @@ fn ai_recaps(app: &App) -> bool {
 /// The worker of a job type, as `initJobs` registers them without a license.
 pub fn worker(t: &str) -> Option<Worker> {
     let enabled: fn(&App) -> bool = match t {
-        "migrations" | "plugins" | "import_process" | "export_process" | "delete_empty_drafts_migration"
-        | "delete_orphan_drafts_migration" | "delete_dms_preferences_migration" | "extract_content"
-        | "cleanup_desktop_tokens" | "cleanup_expired_access_tokens" | "notify_expiring_access_tokens"
-        | "install_plugin_notify_admin" | "refresh_materialized_views" => always,
+        "migrations"
+        | "plugins"
+        | "import_process"
+        | "export_process"
+        | "delete_empty_drafts_migration"
+        | "delete_orphan_drafts_migration"
+        | "delete_dms_preferences_migration"
+        | "extract_content"
+        | "cleanup_desktop_tokens"
+        | "cleanup_expired_access_tokens"
+        | "notify_expiring_access_tokens"
+        | "install_plugin_notify_admin"
+        | "refresh_materialized_views" => always,
         // `!license.IsCloud()`: true without a license.
         "hosted_purchase_screening" => always,
         "expiry_notify" => |a: &App| a.cfg.bool("ServiceSettings.ExtendSessionLengthWithActivity"),
@@ -76,8 +85,13 @@ pub fn worker(t: &str) -> Option<Worker> {
         "recap" | "scheduled_recap" => ai_recaps,
         // Cloud, a post history limit, a Professional license: never without a license. S3 path migration needs
         // MM_CLOUD_FILESTORE_BIFROST (Cloud's file store). The CSV user export needs a license to be created.
-        "last_accessible_post" | "last_accessible_file" | "upgrade_notify_admin" | "trial_notify_admin"
-        | "post_persistent_notifications" | "s3_path_migration" | "export_users_to_csv" => never,
+        "last_accessible_post"
+        | "last_accessible_file"
+        | "upgrade_notify_admin"
+        | "trial_notify_admin"
+        | "post_persistent_notifications"
+        | "s3_path_migration"
+        | "export_users_to_csv" => never,
         _ => return None,
     };
     Some(Worker { enabled })
@@ -96,8 +110,16 @@ pub fn schedulers() -> Vec<Scheduler> {
         },
         // Its own NextScheduleTime: now and NoticesFetchFrequency, without jitter.
         Scheduler { r#type: "product_notices", enabled: notices_enabled, kind: Notices },
-        Scheduler { r#type: "import_delete", enabled: import_retention, kind: Periodic(|_| Duration::from_secs(24 * 3600)) },
-        Scheduler { r#type: "export_delete", enabled: export_retention, kind: Periodic(|_| Duration::from_secs(24 * 3600)) },
+        Scheduler {
+            r#type: "import_delete",
+            enabled: import_retention,
+            kind: Periodic(|_| Duration::from_secs(24 * 3600)),
+        },
+        Scheduler {
+            r#type: "export_delete",
+            enabled: export_retention,
+            kind: Periodic(|_| Duration::from_secs(24 * 3600)),
+        },
         Scheduler {
             r#type: "active_users",
             enabled: |a| a.cfg.bool("MetricsSettings.Enable"),
@@ -108,16 +130,38 @@ pub fn schedulers() -> Vec<Scheduler> {
             enabled: |a| a.cfg.bool("MetricsSettings.EnableClientMetrics"),
             kind: Periodic(|_| Duration::from_secs(24 * 3600)),
         },
-        Scheduler { r#type: "extract_content", enabled: |a| a.cfg.bool("FileSettings.ExtractContent"), kind: ExtractContent },
-        Scheduler { r#type: "install_plugin_notify_admin", enabled: always, kind: Periodic(|_| Duration::from_secs(24 * 3600)) },
+        Scheduler {
+            r#type: "extract_content",
+            enabled: |a| a.cfg.bool("FileSettings.ExtractContent"),
+            kind: ExtractContent,
+        },
+        Scheduler {
+            r#type: "install_plugin_notify_admin",
+            enabled: always,
+            kind: Periodic(|_| Duration::from_secs(24 * 3600)),
+        },
         Scheduler { r#type: "cleanup_desktop_tokens", enabled: always, kind: Periodic(|_| Duration::from_secs(3600)) },
-        Scheduler { r#type: "cleanup_expired_access_tokens", enabled: always, kind: Periodic(|_| Duration::from_secs(3600)) },
-        Scheduler { r#type: "notify_expiring_access_tokens", enabled: always, kind: Periodic(|_| Duration::from_secs(3600)) },
-        Scheduler { r#type: "refresh_materialized_views", enabled: always, kind: Daily("ServiceSettings.RefreshPostStatsRunTime") },
+        Scheduler {
+            r#type: "cleanup_expired_access_tokens",
+            enabled: always,
+            kind: Periodic(|_| Duration::from_secs(3600)),
+        },
+        Scheduler {
+            r#type: "notify_expiring_access_tokens",
+            enabled: always,
+            kind: Periodic(|_| Duration::from_secs(3600)),
+        },
+        Scheduler {
+            r#type: "refresh_materialized_views",
+            enabled: always,
+            kind: Daily("ServiceSettings.RefreshPostStatsRunTime"),
+        },
         Scheduler {
             r#type: "delete_expired_posts",
             enabled: |a| a.cfg.feature("BurnOnRead") && a.cfg.bool("ServiceSettings.EnableBurnOnRead"),
-            kind: Periodic(|a| Duration::from_secs(a.cfg.i64("ServiceSettings.BurnOnReadSchedulerFrequencySeconds").max(0) as u64)),
+            kind: Periodic(|a| {
+                Duration::from_secs(a.cfg.i64("ServiceSettings.BurnOnReadSchedulerFrequencySeconds").max(0) as u64)
+            }),
         },
     ]
 }
@@ -240,15 +284,20 @@ async fn execute(app: &State, job: &mut Job) -> Result<(), String> {
         "export_delete" => retention_delete(app, true).await,
         "install_plugin_notify_admin" => notify_admin_posts(app, false).await,
         "hosted_purchase_screening" => {
-            let v: Option<String> = sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'HostedPurchaseNeedsScreening'")
-                .fetch_optional(&app.db)
-                .await
-                .map_err(db)?;
+            let v: Option<String> =
+                sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = 'HostedPurchaseNeedsScreening'")
+                    .fetch_optional(&app.db)
+                    .await
+                    .map_err(db)?;
             // System.GetByName's not-found error, which names an empty id.
             let v = v.ok_or_else(|| "resource \"System\" not found, id: name=".to_string())?;
-            let at: i64 = v.parse().map_err(|e: std::num::ParseIntError| format!("strconv.ParseInt: parsing \"{v}\": {e}"))?;
+            let at: i64 =
+                v.parse().map_err(|e: std::num::ParseIntError| format!("strconv.ParseInt: parsing \"{v}\": {e}"))?;
             if now_ms() > at + 3 * DAY_MS {
-                sqlx::query("DELETE FROM Systems WHERE Name = 'HostedPurchaseNeedsScreening'").execute(&app.db).await.map_err(db)?;
+                sqlx::query("DELETE FROM Systems WHERE Name = 'HostedPurchaseNeedsScreening'")
+                    .execute(&app.db)
+                    .await
+                    .map_err(db)?;
             }
             Ok(())
         }
@@ -284,7 +333,8 @@ async fn token_recipient(app: &App, user_id: &str) -> ApiResult<Option<(String, 
     if !u.is_bot {
         return Ok((u.delete_at == 0).then(|| (u.id.clone(), None)));
     }
-    let owner: Option<(String,)> = sqlx::query_as("SELECT OwnerId FROM Bots WHERE UserId = $1").bind(user_id).fetch_optional(&app.db).await?;
+    let owner: Option<(String,)> =
+        sqlx::query_as("SELECT OwnerId FROM Bots WHERE UserId = $1").bind(user_id).fetch_optional(&app.db).await?;
     let Some((owner,)) = owner else { return Err(AppError::not_found("store.sql_bot.get.missing.app_error", "")) };
     match app.user(&owner).await? {
         Some(o) if o.delete_at == 0 => Ok(Some((o.id.clone(), Some(u.username.clone())))),
@@ -349,7 +399,9 @@ async fn notify_expired_tokens_deleted(app: &App, tokens: &[(String, String, Str
                 "app.user_access_token.bot_expired_deleted_notification",
                 &[("BotUsername", b), ("Description", description)],
             ),
-            None => crate::i18n::tr("app.user_access_token.expired_deleted_notification", &[("Description", description)]),
+            None => {
+                crate::i18n::tr("app.user_access_token.expired_deleted_notification", &[("Description", description)])
+            }
         }
         .unwrap_or_default();
         let post = Post { message, ..Default::default() };
@@ -387,11 +439,8 @@ async fn notify_expiring_access_tokens(app: &App) -> Result<(), String> {
          ORDER BY t.ExpiresAt ASC LIMIT 1000",
         actionable.join(" OR ")
     );
-    let tokens: Vec<(String, String, String, i64, Option<i64>)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
-        .bind(now)
-        .fetch_all(&app.db)
-        .await
-        .map_err(|e| {
+    let tokens: Vec<(String, String, String, i64, Option<i64>)> =
+        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(now).fetch_all(&app.db).await.map_err(|e| {
             jobs::go_error(
                 "NotifyExpiringAccessTokens",
                 "app.user_access_token.get_expiring.app_error",
@@ -405,7 +454,9 @@ async fn notify_expiring_access_tokens(app: &App) -> Result<(), String> {
     for (id, user_id, description, expires_at, last) in tokens {
         // accessTokenExpiryBucket
         let remaining = expires_at - now;
-        let Some(bucket) = thresholds.iter().copied().find(|t| remaining > 0 && remaining <= t * DAY_MS) else { continue };
+        let Some(bucket) = thresholds.iter().copied().find(|t| remaining > 0 && remaining <= t * DAY_MS) else {
+            continue;
+        };
         if last.is_some_and(|l| l >= expires_at - bucket * DAY_MS) {
             continue;
         }
@@ -422,17 +473,24 @@ async fn notify_expiring_access_tokens(app: &App) -> Result<(), String> {
                 "app.notify_expiring_access_tokens.bot_dm",
                 &[("BotUsername", b), ("Description", &description), ("Days", &days)],
             ),
-            (None, true) => crate::i18n::tr("app.notify_expiring_access_tokens.dm_final", &[("Description", &description)]),
-            (None, false) => {
-                crate::i18n::tr("app.notify_expiring_access_tokens.dm", &[("Description", &description), ("Days", &days)])
+            (None, true) => {
+                crate::i18n::tr("app.notify_expiring_access_tokens.dm_final", &[("Description", &description)])
             }
+            (None, false) => crate::i18n::tr(
+                "app.notify_expiring_access_tokens.dm",
+                &[("Description", &description), ("Days", &days)],
+            ),
         }
         .unwrap_or_default();
         if let Err(e) = system_bot_dm(app, &recipient, Post { message, ..Default::default() }, false).await {
             log("notify_expiring_access_tokens", "send", &e);
             continue;
         }
-        let _ = sqlx::query("UPDATE UserAccessTokens SET LastNotifiedAt = $1 WHERE Id = $2").bind(now).bind(&id).execute(&app.db).await;
+        let _ = sqlx::query("UPDATE UserAccessTokens SET LastNotifiedAt = $1 WHERE Id = $2")
+            .bind(now)
+            .bind(&id)
+            .execute(&app.db)
+            .await;
     }
     Ok(())
 }
@@ -453,9 +511,19 @@ async fn notify_sessions_expired(app: &App) -> Result<(), String> {
     .bind(now - 3_600_000)
     .fetch_all(&app.db)
     .await
-    .map_err(|e| jobs::go_error("NotifySessionsExpired", "app.session.analytics_session_count.app_error", &format!("failed to find Sessions: {e}")))?;
+    .map_err(|e| {
+        jobs::go_error(
+            "NotifySessionsExpired",
+            "app.session.analytics_session_count.app_error",
+            &format!("failed to find Sessions: {e}"),
+        )
+    })?;
     for s in sessions {
-        let mut msg = crate::push::PushNotification { version: "v2".into(), kind: crate::push::SESSION.into(), ..Default::default() };
+        let mut msg = crate::push::PushNotification {
+            version: "v2".into(),
+            kind: crate::push::SESSION.into(),
+            ..Default::default()
+        };
         msg.set_device(&s.device_id);
         msg.ack_id = crate::app::new_id();
         msg.message = session_expired_message(app, &s.user_id).await;
@@ -463,7 +531,9 @@ async fn notify_sessions_expired(app: &App) -> Result<(), String> {
             eprintln!("Failed to send to push proxy: user_id={} session_id={} err={e}", s.user_id, s.id);
             continue;
         }
-        if let Err(e) = sqlx::query("UPDATE Sessions SET ExpiredNotify = true WHERE Id = $1").bind(&s.id).execute(&app.db).await {
+        if let Err(e) =
+            sqlx::query("UPDATE Sessions SET ExpiredNotify = true WHERE Id = $1").bind(&s.id).execute(&app.db).await
+        {
             eprintln!("Failed to update ExpiredNotify flag: sessionid={} err={e}", s.id);
         }
     }
@@ -477,7 +547,11 @@ async fn session_expired_message(app: &App, user_id: &str) -> String {
         _ => "en".to_string(),
     };
     let hours = app.cfg.i64("ServiceSettings.SessionLengthMobileInHours").to_string();
-    crate::i18n::tl(&locale, "api.push_notifications.session.expired", &[("siteName", crate::brand::name()), ("hoursCount", &hours)])
+    crate::i18n::tl(
+        &locale,
+        "api.push_notifications.session.expired",
+        &[("siteName", crate::brand::name()), ("hoursCount", &hours)],
+    )
 }
 
 /// The ETag of the last notices fetch and its body (`noticesCache`, `utils.GetURLWithCache`).
@@ -518,7 +592,8 @@ pub async fn update_product_notices(app: &App) -> Result<(), NoticesError> {
     };
     let notices: Vec<serde_json::Map<String, Value>> =
         serde_json::from_slice(&data).map_err(|e| err("api.system.update_notices.parse_failed", e.to_string()))?;
-    let ids: Vec<String> = notices.iter().filter_map(|n| n.get("id").and_then(Value::as_str).map(str::to_string)).collect();
+    let ids: Vec<String> =
+        notices.iter().filter_map(|n| n.get("id").and_then(Value::as_str).map(str::to_string)).collect();
     *NOTICE_IDS.lock().unwrap() = ids.clone();
     // ClearOldNotices: NotEq with no ids is "IS NOT NULL", every row.
     let q = if ids.is_empty() {
@@ -548,13 +623,25 @@ async fn retention_delete(app: &App, export: bool) -> Result<(), String> {
         }
         if !export {
             const INCOMPLETE: &str = ".tmp";
-            if name.len() > 26 + 1 + INCOMPLETE.len() && name.ends_with(INCOMPLETE) && !name[..name.len() - 4].contains('.') {
+            if name.len() > 26 + 1 + INCOMPLETE.len()
+                && name.ends_with(INCOMPLETE)
+                && !name[..name.len() - 4].contains('.')
+            {
                 let upload_id = &name[..26];
-                if sqlx::query("DELETE FROM UploadSessions WHERE Id = $1").bind(upload_id).execute(&app.db).await.is_err() {
+                if sqlx::query("DELETE FROM UploadSessions WHERE Id = $1")
+                    .bind(upload_id)
+                    .execute(&app.db)
+                    .await
+                    .is_err()
+                {
                     continue;
                 }
             } else {
-                let info: Option<(String,)> = match sqlx::query_as("SELECT Id FROM FileInfo WHERE Path = $1").bind(&path).fetch_optional(&app.db).await {
+                let info: Option<(String,)> = match sqlx::query_as("SELECT Id FROM FileInfo WHERE Path = $1")
+                    .bind(&path)
+                    .fetch_optional(&app.db)
+                    .await
+                {
                     Ok(i) => i,
                     Err(_) => continue,
                 };
@@ -619,7 +706,8 @@ impl App {
         if !files.is_empty() {
             self.caches.file_infos.remove(post_id);
         }
-        let history: Vec<String> = sqlx::query_scalar("SELECT Id FROM Posts WHERE OriginalId = $1").bind(post_id).fetch_all(&self.db).await?;
+        let history: Vec<String> =
+            sqlx::query_scalar("SELECT Id FROM Posts WHERE OriginalId = $1").bind(post_id).fetch_all(&self.db).await?;
         for h in history {
             sqlx::query("DELETE FROM Posts WHERE Id = $1").bind(&h).execute(&self.db).await?;
         }
@@ -658,18 +746,28 @@ impl App {
 async fn notify_admin_posts(app: &App, trial: bool) -> Result<(), String> {
     let key = if trial { "LAST_TRIAL_NOTIFICATION_TIMESTAMP" } else { "LAST_UPGRADE_NOTIFICATION_TIMESTAMP" };
     // CanNotifyAdmin
-    let last: Option<String> =
-        sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = $1").bind(key).fetch_optional(&app.db).await.map_err(|e| e.to_string())?;
+    let last: Option<String> = sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = $1")
+        .bind(key)
+        .fetch_optional(&app.db)
+        .await
+        .map_err(|e| e.to_string())?;
     if let Some(v) = last {
         let ok = match v.parse::<f64>() {
             Err(_) => false,
             Ok(t) => {
-                let days = std::env::var("MM_NOTIFY_ADMIN_COOL_OFF_DAYS").ok().and_then(|d| d.parse::<f64>().ok()).unwrap_or(14.0);
+                let days = std::env::var("MM_NOTIFY_ADMIN_COOL_OFF_DAYS")
+                    .ok()
+                    .and_then(|d| d.parse::<f64>().ok())
+                    .unwrap_or(14.0);
                 (now_ms() - t as i64) >= (days * DAY_MS as f64) as i64
             }
         };
         if !ok {
-            return Err(jobs::go_error("SendNotifyAdminPosts", "app.notify_admin.send_notification_post.app_error", "Cannot notify yet"));
+            return Err(jobs::go_error(
+                "SendNotifyAdminPosts",
+                "app.notify_admin.send_notification_post.app_error",
+                "Cannot notify yet",
+            ));
         }
     }
     let admins: Vec<(String, String)> = sqlx::query_as(
@@ -729,7 +827,8 @@ async fn notify_admin_posts(app: &App, trial: bool) -> Result<(), String> {
         };
         let message = crate::i18n::tr(id, &[("UsersNum", &n), ("WorkspaceName", "")]).unwrap_or_default();
         for (admin, _) in &admins {
-            let mut post = Post { message: message.clone(), r#type: "custom_up_notification".into(), ..Default::default() };
+            let mut post =
+                Post { message: message.clone(), r#type: "custom_up_notification".into(), ..Default::default() };
             post.props.0.insert("requested_features".into(), json!(by_feature));
             post.props.0.insert("trial".into(), json!(trial));
             if let Err(e) = system_bot_dm(app, admin, post, true).await {
@@ -738,20 +837,23 @@ async fn notify_admin_posts(app: &App, trial: bool) -> Result<(), String> {
         }
     }
     // FinishSendAdminNotifyPost
-    let _ = sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, $2) ON CONFLICT (Name) DO UPDATE SET Value = $2")
-        .bind(key)
-        .bind(now_ms().to_string())
-        .execute(&app.db)
-        .await;
+    let _ =
+        sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, $2) ON CONFLICT (Name) DO UPDATE SET Value = $2")
+            .bind(key)
+            .bind(now_ms().to_string())
+            .execute(&app.db)
+            .await;
     for rows in by_plugin.values() {
         for r in rows {
-            let _ = sqlx::query("UPDATE NotifyAdmin SET SentAt = $1 WHERE UserId = $2 AND RequiredPlan = $3 AND RequiredFeature = $4")
-                .bind(now)
-                .bind(&r.0)
-                .bind(&r.2)
-                .bind(&r.3)
-                .execute(&app.db)
-                .await;
+            let _ = sqlx::query(
+                "UPDATE NotifyAdmin SET SentAt = $1 WHERE UserId = $2 AND RequiredPlan = $3 AND RequiredFeature = $4",
+            )
+            .bind(now)
+            .bind(&r.0)
+            .bind(&r.2)
+            .bind(&r.3)
+            .execute(&app.db)
+            .await;
         }
     }
     let _ = sqlx::query("DELETE FROM NotifyAdmin WHERE Trial = $1 AND CreateAt < $2 AND SentAt IS NULL")
@@ -769,7 +871,10 @@ const PHASE_2: &str = "migration_advanced_permissions_phase_2";
 /// The migrations scheduler's `ScheduleJob`: a job for the first migration not done; true once all are.
 pub async fn schedule_migrations(app: &State) -> ApiResult<bool> {
     // GetMigrationState
-    let done: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM Systems WHERE Name = $1)").bind(PHASE_2).fetch_one(&app.db).await?;
+    let done: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM Systems WHERE Name = $1)")
+        .bind(PHASE_2)
+        .fetch_one(&app.db)
+        .await?;
     if done {
         return Ok(true);
     }
@@ -828,8 +933,17 @@ async fn migrations_job(app: &State, job: Job) {
                 return;
             }
             Ok((true, _)) => {
-                if let Err(e) = sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, 'true')").bind(&key).execute(&app.db).await {
-                    let _ = jobs::set_error(app, &mut job, Some(jobs::job_error("migrations.system.save.app_error", &e.to_string()))).await;
+                if let Err(e) = sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, 'true')")
+                    .bind(&key)
+                    .execute(&app.db)
+                    .await
+                {
+                    let _ = jobs::set_error(
+                        app,
+                        &mut job,
+                        Some(jobs::job_error("migrations.system.save.app_error", &e.to_string())),
+                    )
+                    .await;
                     return;
                 }
                 if let Err(e) = jobs::set_success(app, &job).await {
@@ -861,9 +975,15 @@ struct Phase2 {
 /// roles moved out of `Roles` into the `Scheme*` columns.
 async fn phase_2_batch(app: &App, last_done: &str) -> Result<(bool, String), String> {
     let zero = "0".repeat(26);
-    let invalid = |p: &str| jobs::job_error("migrations.worker.run_advanced_permissions_phase_2_migration.invalid_progress", p);
+    let invalid =
+        |p: &str| jobs::job_error("migrations.worker.run_advanced_permissions_phase_2_migration.invalid_progress", p);
     let mut p = if last_done.is_empty() {
-        Phase2 { current_table: "TeamMembers".into(), last_team_id: zero.clone(), last_channel_id: zero.clone(), last_user: zero.clone() }
+        Phase2 {
+            current_table: "TeamMembers".into(),
+            last_team_id: zero.clone(),
+            last_channel_id: zero.clone(),
+            last_user: zero.clone(),
+        }
     } else {
         let p: Phase2 = serde_json::from_str(last_done).map_err(|e| invalid(&e.to_string()))?;
         let ok = [&p.last_channel_id, &p.last_team_id, &p.last_user].iter().all(|i| crate::app::is_valid_id(i))
@@ -879,9 +999,16 @@ async fn phase_2_batch(app: &App, last_done: &str) -> Result<(bool, String), Str
     } else {
         ("ChannelMembers", "ChannelId", p.last_channel_id.clone())
     };
-    let (admin, user, guest) =
-        if table == "TeamMembers" { ("team_admin", "team_user", "team_guest") } else { ("channel_admin", "channel_user", "channel_guest") };
-    let err_id = if table == "TeamMembers" { "app.team.migrate_team_members.update.app_error" } else { "app.channel.migrate_channel_members.select.app_error" };
+    let (admin, user, guest) = if table == "TeamMembers" {
+        ("team_admin", "team_user", "team_guest")
+    } else {
+        ("channel_admin", "channel_user", "channel_guest")
+    };
+    let err_id = if table == "TeamMembers" {
+        "app.team.migrate_team_members.update.app_error"
+    } else {
+        "app.channel.migrate_channel_members.select.app_error"
+    };
     let fail = |e: sqlx::Error| jobs::job_error(err_id, &e.to_string());
     let mut tx = app.db.begin().await.map_err(fail)?;
     type Member = (String, String, String, Option<bool>, Option<bool>, Option<bool>);
@@ -967,10 +1094,11 @@ async fn batch_migration_job(app: &State, job: Job) {
                     let _ = jobs::set_error(app, &mut job, Some(update_error_text(&e))).await;
                 }
                 // markAsComplete
-                let _ = sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, 'true') ON CONFLICT (Name) DO NOTHING")
-                    .bind(&job.r#type)
-                    .execute(&app.db)
-                    .await;
+                let _ =
+                    sqlx::query("INSERT INTO Systems (Name, Value) VALUES ($1, 'true') ON CONFLICT (Name) DO NOTHING")
+                        .bind(&job.r#type)
+                        .execute(&app.db)
+                        .await;
                 return;
             }
             Ok((false, next)) => {
@@ -1036,7 +1164,10 @@ async fn migration_batch(app: &App, t: &str, data: &Data) -> Result<(bool, Optio
 /// and the job succeeds.
 async fn resend_invitation_job(app: &State, mut job: Job) {
     let scheduled: i64 = job.get("scheduledAt").and_then(|s| s.parse().ok()).unwrap_or(0);
-    let duration = std::env::var("MM_RESEND_INVITATION_EMAIL_JOB_DURATION").ok().and_then(|d| d.parse().ok()).unwrap_or(2 * DAY_MS);
+    let duration = std::env::var("MM_RESEND_INVITATION_EMAIL_JOB_DURATION")
+        .ok()
+        .and_then(|d| d.parse().ok())
+        .unwrap_or(2 * DAY_MS);
     if now_ms() - scheduled <= duration {
         return;
     }
@@ -1057,7 +1188,8 @@ async fn resend_invitation_job(app: &State, mut job: Job) {
 /// again with the "48" hours reminder (`InviteNewUsersToTeamGracefully`). The error is `data.error`'s text.
 async fn resend_emails(app: &App, job: &Job) -> Result<(), String> {
     let werr = |e: String| format!("job_id: {} — {e}", job.id);
-    let emails: Vec<String> = serde_json::from_str(job.get("emailList").unwrap_or("")).map_err(|e| werr(e.to_string()))?;
+    let emails: Vec<String> =
+        serde_json::from_str(job.get("emailList").unwrap_or("")).map_err(|e| werr(e.to_string()))?;
     let mut channels: Vec<String> = vec![];
     if let Some(c) = job.get("channelList").filter(|c| !c.is_empty()) {
         channels = serde_json::from_str(c).map_err(|e| werr(e.to_string()))?;
@@ -1108,7 +1240,12 @@ async fn resend_emails(app: &App, job: &Job) -> Result<(), String> {
 }
 
 /// `InviteNewUsersToTeamGracefully` with invitee profiles: its checks, then the license error.
-async fn resend_with_profiles(app: &App, emails: &[String], team_id: &str, sender: &str) -> ApiResult<Vec<crate::teams::EmailInviteWithError>> {
+async fn resend_with_profiles(
+    app: &App,
+    emails: &[String],
+    team_id: &str,
+    sender: &str,
+) -> ApiResult<Vec<crate::teams::EmailInviteWithError>> {
     if !app.cfg.bool("ServiceSettings.EnableEmailInvitations") {
         return Err(AppError::new(
             axum::http::StatusCode::NOT_IMPLEMENTED,
@@ -1167,7 +1304,10 @@ pub fn spawn_recurring_tasks(app: State) {
     });
     recurring(&app, Duration::from_secs(3600), |app| async move {
         // CommandWebhook.Cleanup: older than 30 minutes.
-        let _ = sqlx::query("DELETE FROM CommandWebhooks WHERE CreateAt < $1").bind(now_ms() - 30 * 60_000).execute(&app.db).await;
+        let _ = sqlx::query("DELETE FROM CommandWebhooks WHERE CreateAt < $1")
+            .bind(now_ms() - 30 * 60_000)
+            .execute(&app.db)
+            .await;
     });
     recurring(&app, Duration::from_secs(24 * 3600), |app| async move {
         let days = app.cfg.i64("JobSettings.CleanupJobsThresholdDays");
@@ -1218,7 +1358,11 @@ pub async fn startup(app: &State) {
     }
     for t in ["delete_empty_drafts_migration", "delete_orphan_drafts_migration", "delete_dms_preferences_migration"] {
         // doDelete*Migration: unless done, or a job is pending.
-        let done: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM Systems WHERE Name = $1)").bind(t).fetch_one(&app.db).await.unwrap_or(true);
+        let done: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM Systems WHERE Name = $1)")
+            .bind(t)
+            .fetch_one(&app.db)
+            .await
+            .unwrap_or(true);
         if done {
             continue;
         }
@@ -1235,7 +1379,9 @@ pub async fn startup(app: &State) {
 
 /// The config listener: guests deactivated when guest accounts (or their magic links) are turned off.
 pub async fn config_changed(app: &App, old: &Value, new: &Value) {
-    let b = |v: &Value, k: &str| v.pointer(&format!("/GuestAccountsSettings/{k}")).and_then(Value::as_bool).unwrap_or(false);
+    let b = |v: &Value, k: &str| {
+        v.pointer(&format!("/GuestAccountsSettings/{k}")).and_then(Value::as_bool).unwrap_or(false)
+    };
     if b(old, "Enable") && !b(new, "Enable") {
         if let Err(e) = app.deactivate_guests(false).await {
             log("config", "deactivate guests", &e);
@@ -1253,7 +1399,9 @@ impl App {
     /// their sessions revoked, `userDeactivated` for each, the caches cleared and `guests_deactivated` sent.
     pub async fn deactivate_guests(&self, magic_link: bool) -> ApiResult<()> {
         let now = now_ms();
-        let err = |e: sqlx::Error| AppError::internal("app.user.update_active_for_multiple_users.updating.app_error", e.to_string());
+        let err = |e: sqlx::Error| {
+            AppError::internal("app.user.update_active_for_multiple_users.updating.app_error", e.to_string())
+        };
         if magic_link {
             sqlx::query("UPDATE Users SET UpdateAt = $1, DeleteAt = $1, Roles = 'system_user' WHERE DeleteAt = 0 AND AuthService = 'magic_link'")
                 .bind(now)
@@ -1267,7 +1415,11 @@ impl App {
                 .await
                 .map_err(err)?;
         }
-        let ids: Vec<String> = sqlx::query_scalar("SELECT Id FROM Users WHERE DeleteAt = $1").bind(now).fetch_all(&self.db).await.map_err(err)?;
+        let ids: Vec<String> = sqlx::query_scalar("SELECT Id FROM Users WHERE DeleteAt = $1")
+            .bind(now)
+            .fetch_all(&self.db)
+            .await
+            .map_err(err)?;
         for id in &ids {
             self.caches.invalidate_user(id);
             self.revoke_all_sessions(id).await?;
@@ -1276,7 +1428,8 @@ impl App {
             self.user_deactivated(id).await?;
         }
         if magic_link {
-            let _ = sqlx::query("DELETE FROM Tokens WHERE Type = 'guest_magic_link_invitation'").execute(&self.db).await;
+            let _ =
+                sqlx::query("DELETE FROM Tokens WHERE Type = 'guest_magic_link_invitation'").execute(&self.db).await;
             let _ = sqlx::query("DELETE FROM Tokens WHERE Type = 'guest_magic_link'").execute(&self.db).await;
         }
         // Channel().ClearCaches() and User().ClearCaches().

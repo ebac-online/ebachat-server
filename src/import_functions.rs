@@ -10,11 +10,14 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::app::{is_valid_id, new_id, now_ms};
+use crate::bots::Bot;
 use crate::bulk_import::limits::*;
 use crate::bulk_import::*;
 use crate::db::{self, Table};
-use crate::bots::Bot;
-use crate::model::{Channel, ChannelMember, Emoji, FileInfo, Post, Preference, Reaction, Role, Scheme, Session, Team, TeamMember, ThreadMembership, User};
+use crate::model::{
+    Channel, ChannelMember, Emoji, FileInfo, Post, Preference, Reaction, Role, Scheme, Session, Team, TeamMember,
+    ThreadMembership, User,
+};
 
 fn warn(msg: &str) {
     crate::logs::warn(msg, &[]);
@@ -132,7 +135,8 @@ impl Ctx {
     async fn scheme_by_name(&self, name: &str) -> IResult<Scheme> {
         match db::one::<Scheme>(&self.app.db, "Name = $1", name).await {
             Ok(Some(s)) => Ok(s),
-            Ok(None) => Err(IErr::new("GetSchemeByName", "app.scheme.get.app_error", 404).wrap(not_found("Scheme", &format!("schemeName={name}")))),
+            Ok(None) => Err(IErr::new("GetSchemeByName", "app.scheme.get.app_error", 404)
+                .wrap(not_found("Scheme", &format!("schemeName={name}")))),
             Err(e) => Err(IErr::new("GetSchemeByName", "app.scheme.get.app_error", 500).wrap(e)),
         }
     }
@@ -159,7 +163,10 @@ impl Ctx {
             }
         }
         if !missed_dest.is_empty() {
-            let remapped = self.profiles_by_usernames(&missed_dest).await.map_err(|e| some_missing().status(500).wrap(e.text()))?;
+            let remapped = self
+                .profiles_by_usernames(&missed_dest)
+                .await
+                .map_err(|e| some_missing().status(500).wrap(e.text()))?;
             let by_dest: HashMap<String, User> = remapped.into_iter().map(|u| (u.username.to_lowercase(), u)).collect();
             for (src, dest) in missed_src.into_iter().zip(missed_dest) {
                 if let Some(u) = by_dest.get(&dest.to_lowercase()) {
@@ -201,7 +208,11 @@ impl Ctx {
         }
         let err = || IErr::bad("app.import.get_teams_by_names.some_teams_not_found.error");
         let sql = format!("{} WHERE Name = ANY($1)", Team::SELECT);
-        let teams: Vec<Team> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&unique).fetch_all(&self.app.db).await.map_err(|e| err().wrap(e))?;
+        let teams: Vec<Team> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(&unique)
+            .fetch_all(&self.app.db)
+            .await
+            .map_err(|e| err().wrap(e))?;
         if teams.len() != unique.len() {
             return Err(err().wrap(not_found("Team", &format!("nameIn=[{}]", names.join(" ")))));
         }
@@ -257,7 +268,8 @@ impl Ctx {
         }
         let name = d.name.clone().unwrap_or_default();
         info(&format!("Importing role role_name={name}"));
-        let mut role = self.app.roles(&[name.as_str()]).await?.into_iter().next().map(|r| (*r).clone()).unwrap_or_default();
+        let mut role =
+            self.app.roles(&[name.as_str()]).await?.into_iter().next().map(|r| (*r).clone()).unwrap_or_default();
         role.name = name;
         if let Some(v) = &d.display_name {
             role.display_name = v.clone();
@@ -341,7 +353,8 @@ impl Ctx {
         if let Some(v) = &d.description {
             scheme.description = v.clone();
         }
-        let scheme = if scheme.id.is_empty() { self.create_scheme(scheme).await? } else { self.update_scheme(scheme).await? };
+        let scheme =
+            if scheme.id.is_empty() { self.create_scheme(scheme).await? } else { self.update_scheme(scheme).await? };
         self.app.caches.scheme.remove(&scheme.id);
 
         let with_name = |r: &Option<RoleData>, name: &str, default_display: Option<&str>| -> RoleData {
@@ -356,11 +369,16 @@ impl Ctx {
         if scheme.scope == "team" {
             self.import_role(&with_name(&d.default_team_admin_role, &scheme.default_team_admin_role, None)).await?;
             self.import_role(&with_name(&d.default_team_user_role, &scheme.default_team_user_role, None)).await?;
-            self.import_role(&with_name(&d.default_team_guest_role, &scheme.default_team_guest_role, Some("Team Guest Role for Scheme")))
-                .await?;
+            self.import_role(&with_name(
+                &d.default_team_guest_role,
+                &scheme.default_team_guest_role,
+                Some("Team Guest Role for Scheme"),
+            ))
+            .await?;
         }
         if scheme.scope == "team" || scheme.scope == "channel" {
-            self.import_role(&with_name(&d.default_channel_admin_role, &scheme.default_channel_admin_role, None)).await?;
+            self.import_role(&with_name(&d.default_channel_admin_role, &scheme.default_channel_admin_role, None))
+                .await?;
             self.import_role(&with_name(&d.default_channel_user_role, &scheme.default_channel_user_role, None)).await?;
             self.import_role(&with_name(
                 &d.default_channel_guest_role,
@@ -392,11 +410,12 @@ impl Ctx {
             "run_member",
         ];
         let names: Vec<String> = defaults.iter().map(|s| s.to_string()).collect();
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT Name, COALESCE(Permissions, '') FROM Roles WHERE Name = ANY($1)")
-            .bind(&names)
-            .fetch_all(&self.app.db)
-            .await
-            .map_err(|e| save_err(e.to_string()))?;
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT Name, COALESCE(Permissions, '') FROM Roles WHERE Name = ANY($1)")
+                .bind(&names)
+                .fetch_all(&self.app.db)
+                .await
+                .map_err(|e| save_err(e.to_string()))?;
         let perms: HashMap<String, Vec<String>> =
             rows.into_iter().map(|(n, p)| (n, p.split_whitespace().map(str::to_string).collect())).collect();
         if perms.len() != defaults.len() {
@@ -427,7 +446,8 @@ impl Ctx {
         }
         if s.scope == "team" || s.scope == "channel" {
             let channel = s.scope == "channel";
-            let moderated = |p: &Vec<String>| p.iter().filter(|x| MODERATED.contains(&x.as_str())).cloned().collect::<Vec<_>>();
+            let moderated =
+                |p: &Vec<String>| p.iter().filter(|x| MODERATED.contains(&x.as_str())).cloned().collect::<Vec<_>>();
             let admin = if channel { vec![] } else { perms["channel_admin"].clone() };
             let user = if channel { moderated(&perms["channel_user"]) } else { perms["channel_user"].clone() };
             let guest = if channel { moderated(&perms["channel_guest"]) } else { perms["channel_guest"].clone() };
@@ -456,7 +476,8 @@ impl Ctx {
         s.create_at = now_ms();
         s.update_at = s.create_at;
         if !scheme_valid(&s) {
-            return Err(IErr::new("CreateScheme", "app.scheme.save.invalid_scheme.app_error", 400).wrap(format!("invalid input: entity: Scheme field: <any> value: {s:?}")));
+            return Err(IErr::new("CreateScheme", "app.scheme.save.invalid_scheme.app_error", 400)
+                .wrap(format!("invalid input: entity: Scheme field: <any> value: {s:?}")));
         }
         sqlx::query(
             "INSERT INTO Schemes (Id, Name, DisplayName, Description, Scope, DefaultTeamAdminRole, DefaultTeamUserRole,
@@ -493,7 +514,8 @@ impl Ctx {
     /// `App.UpdateScheme` → `SqlSchemeStore.Save` of an existing scheme.
     async fn update_scheme(&self, mut s: Scheme) -> IResult<Scheme> {
         if !scheme_valid(&s) || !is_valid_id(&s.id) {
-            return Err(IErr::new("UpdateScheme", "app.scheme.save.invalid_scheme.app_error", 400).wrap(format!("invalid input: entity: Scheme field: <any> value: {s:?}")));
+            return Err(IErr::new("UpdateScheme", "app.scheme.save.invalid_scheme.app_error", 400)
+                .wrap(format!("invalid input: entity: Scheme field: <any> value: {s:?}")));
         }
         s.update_at = now_ms();
         let n = sqlx::query(
@@ -641,8 +663,16 @@ impl Ctx {
     /// `SqlChannelStore.Delete`: `DeleteAt` and `UpdateAt` set, the public channel row too.
     async fn set_channel_delete_at(&self, c: &Channel, t: i64) -> Result<(), sqlx::Error> {
         let mut tx = self.app.db.begin().await?;
-        sqlx::query("UPDATE Channels SET DeleteAt = $1, UpdateAt = $1 WHERE Id = $2").bind(t).bind(&c.id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE PublicChannels SET DeleteAt = $1 WHERE Id = $2").bind(t).bind(&c.id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE Channels SET DeleteAt = $1, UpdateAt = $1 WHERE Id = $2")
+            .bind(t)
+            .bind(&c.id)
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("UPDATE PublicChannels SET DeleteAt = $1 WHERE Id = $2")
+            .bind(t)
+            .bind(&c.id)
+            .execute(&mut *tx)
+            .await?;
         tx.commit().await?;
         self.app.invalidate_channel_cache(c);
         Ok(())
@@ -664,12 +694,17 @@ impl Ctx {
             (false, false, false, false, false);
         let mut create_deactivated = false;
         let inactive = self.imported_users == "inactive";
-        let fresh = || User { notify_props: sqlx::types::Json(crate::user_edit::default_notify_props()), ..Default::default() };
+        let fresh =
+            || User { notify_props: sqlx::types::Json(crate::user_edit::default_notify_props()), ..Default::default() };
         let has_sso = d.auth_service.is_some() && d.auth_data.as_deref().is_some_and(|a| !a.is_empty());
         let mut matched_by_auth = false;
         let mut user = if has_sso {
             let (data, service) = (d.auth_data.clone().unwrap_or_default(), d.auth_service.clone().unwrap_or_default());
-            match self.user_by_auth(&data, &service).await.map_err(|e| IErr::new("importUser", "app.user.get_by_auth.app_error", 500).wrap(e.text()))? {
+            match self
+                .user_by_auth(&data, &service)
+                .await
+                .map_err(|e| IErr::new("importUser", "app.user.get_by_auth.app_error", 500).wrap(e.text()))?
+            {
                 Some(u) => {
                     matched_by_auth = true;
                     if u.username != username {
@@ -686,16 +721,24 @@ impl Ctx {
                     user_changed = true;
                     fresh()
                 }
-                None => match self.user_by_username(&username).await.map_err(|e| IErr::new("importUser", "app.user.get_by_username.app_error", 500).wrap(e.text()))? {
-                    Some(u) => u,
-                    None => {
-                        user_changed = true;
-                        fresh()
+                None => {
+                    match self.user_by_username(&username).await.map_err(|e| {
+                        IErr::new("importUser", "app.user.get_by_username.app_error", 500).wrap(e.text())
+                    })? {
+                        Some(u) => u,
+                        None => {
+                            user_changed = true;
+                            fresh()
+                        }
                     }
-                },
+                }
             }
         } else {
-            match self.user_by_username(&username).await.map_err(|e| IErr::new("importUser", "app.user.get_by_username.app_error", 500).wrap(e.text()))? {
+            match self
+                .user_by_username(&username)
+                .await
+                .map_err(|e| IErr::new("importUser", "app.user.get_by_username.app_error", 500).wrap(e.text()))?
+            {
                 Some(u) => u,
                 None => {
                     if self.deactivate_missing_users {
@@ -759,7 +802,8 @@ impl Ctx {
                 user_changed = true;
             }
         }
-        let locale = d.locale.clone().unwrap_or_else(|| app.cfg.str("LocalizationSettings.DefaultClientLocale").to_string());
+        let locale =
+            d.locale.clone().unwrap_or_else(|| app.cfg.str("LocalizationSettings.DefaultClientLocale").to_string());
         if user.locale != locale {
             user.locale = locale;
             user_changed = true;
@@ -802,10 +846,12 @@ impl Ctx {
             }
             if np.mention_keys.is_none() {
                 // UpdateMentionKeysFromUsername("")
-                let keys: Vec<String> = crate::user_edit::mention_keys(user.notify_props.0.get("mention_keys").map(String::as_str).unwrap_or(""))
-                    .into_iter()
-                    .filter(|k| k != "@")
-                    .collect();
+                let keys: Vec<String> = crate::user_edit::mention_keys(
+                    user.notify_props.0.get("mention_keys").map(String::as_str).unwrap_or(""),
+                )
+                .into_iter()
+                .filter(|k| k != "@")
+                .collect();
                 let v = if keys.is_empty() { String::new() } else { format!(",{}", keys.join(",")) };
                 user.notify_props.0.insert("mention_keys".into(), v);
             }
@@ -840,12 +886,13 @@ impl Ctx {
                 return Err(e.at("importUser"));
             }
             if user.email_verified
-                && let Err(e) = sqlx::query("UPDATE Users SET Email = lower($1), EmailVerified = true, UpdateAt = $2 WHERE Id = $3")
-                    .bind(&user.email)
-                    .bind(now_ms())
-                    .bind(&user.id)
-                    .execute(&app.db)
-                    .await
+                && let Err(e) =
+                    sqlx::query("UPDATE Users SET Email = lower($1), EmailVerified = true, UpdateAt = $2 WHERE Id = $3")
+                        .bind(&user.email)
+                        .bind(now_ms())
+                        .bind(&user.id)
+                        .execute(&app.db)
+                        .await
             {
                 warn(&format!("Failed to set email verified err={e}"));
             }
@@ -1004,14 +1051,20 @@ impl Ctx {
         let max = self.app.cfg.i64("FileSettings.MaxFileSize").max(0) as u64;
         let mut bytes = match data {
             Some(z) => read_zip_file(&self.archive, &z.name, Some(max)).await.map_err(|e| {
-                IErr::new("importProfileImage", "app.import.profile_image.open.app_error", 500).p("FileName", &z.name).wrap(e)
+                IErr::new("importProfileImage", "app.import.profile_image.open.app_error", 500)
+                    .p("FileName", &z.name)
+                    .wrap(e)
             })?,
-            None => std::fs::read(path).map_err(|e| IErr::new("importProfileImage", "app.import.profile_image.open.app_error", 500).wrap(e))?,
+            None => std::fs::read(path)
+                .map_err(|e| IErr::new("importProfileImage", "app.import.profile_image.open.app_error", 500).wrap(e))?,
         };
         bytes.truncate(max as usize);
         self.app.set_profile_image_from_bytes(user_id, &bytes).await.map_err(|e| {
-            if e.id == "api.user.upload_profile_user.decode.app_error" || e.id == "api.user.upload_profile_user.check_image_limits.app_error" {
-                IErr::new("SetProfileImage", "api.user.upload_profile_user.check_image_limits.app_error", 400).wrap(e.detailed_error)
+            if e.id == "api.user.upload_profile_user.decode.app_error"
+                || e.id == "api.user.upload_profile_user.check_image_limits.app_error"
+            {
+                IErr::new("SetProfileImage", "api.user.upload_profile_user.check_image_limits.app_error", 400)
+                    .wrap(e.detailed_error)
             } else {
                 IErr::from(e)
             }
@@ -1134,10 +1187,15 @@ impl Ctx {
                     .bind(team_id)
                     .fetch_one(&app.db)
                     .await
-                    .map_err(|e| IErr::new("BulkImport", "app.import.import_user_teams.save_members.error", 500).wrap(e))?;
+                    .map_err(|e| {
+                        IErr::new("BulkImport", "app.import.import_user_teams.save_members.error", 500).wrap(e)
+                    })?;
                     if count + n > max {
                         return Err(IErr::bad("app.import.import_user_teams.save_members.max_accounts.app_error")
-                            .wrap(format!("limit exceeded: what: TeamMember count: {} metadata: team members limit exceeded", count + n)));
+                            .wrap(format!(
+                                "limit exceeded: what: TeamMember count: {} metadata: team members limit exceeded",
+                                count + n
+                            )));
                     }
                 }
             }
@@ -1160,16 +1218,22 @@ impl Ctx {
                 self.update_team_member_roles(&m.team_id, &user.id, &roles).await?;
             }
             let (g, u, a) = flags.get(&m.team_id).copied().unwrap_or((false, true, false));
-            if let Err(e) = self.update_team_member_scheme_roles(&m.team_id, &user.id, g, u, m.scheme_admin || a).await {
-                warn(&format!("Error updating team member scheme roles team_id={} user_id={} err={}", m.team_id, user.id, e.text()));
+            if let Err(e) = self.update_team_member_scheme_roles(&m.team_id, &user.id, g, u, m.scheme_admin || a).await
+            {
+                warn(&format!(
+                    "Error updating team member scheme roles team_id={} user_id={} err={}",
+                    m.team_id,
+                    user.id,
+                    e.text()
+                ));
             }
         }
 
         for team in all_teams.values() {
             if let Some(p) = theme_prefs.get_mut(&team.id) {
-                self.save_preferences(p)
-                    .await
-                    .map_err(|e| IErr::new("BulkImport", "app.import.import_user_teams.save_preferences.error", 500).wrap(e))?;
+                self.save_preferences(p).await.map_err(|e| {
+                    IErr::new("BulkImport", "app.import.import_user_teams.save_preferences.error", 500).wrap(e)
+                })?;
             }
             let list = channels.remove(&team.id).unwrap_or_default();
             self.import_user_channels(user, team, &list).await?;
@@ -1179,7 +1243,8 @@ impl Ctx {
 
     async fn team_member_row(&self, team_id: &str, user_id: &str) -> IResult<Option<TeamMember>> {
         let sql = format!("{} WHERE TeamId = $1 AND UserId = $2", TeamMember::SELECT);
-        let m: Option<TeamMember> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(team_id).bind(user_id).fetch_optional(&self.app.db).await?;
+        let m: Option<TeamMember> =
+            sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(team_id).bind(user_id).fetch_optional(&self.app.db).await?;
         // The stored roles are the explicit ones.
         Ok(m.map(|mut m| {
             m.explicit_roles = m.roles.clone();
@@ -1236,18 +1301,34 @@ impl Ctx {
             } else if name == guest_role {
                 g = true;
             } else {
-                return Err(IErr::new("UpdateTeamMemberRoles", "api.channel.update_team_member_roles.scheme_role.app_error", 400)
-                    .detail(format!("role_name={name}")));
+                return Err(IErr::new(
+                    "UpdateTeamMemberRoles",
+                    "api.channel.update_team_member_roles.scheme_role.app_error",
+                    400,
+                )
+                .detail(format!("role_name={name}")));
             }
         }
         if g && u {
-            return Err(IErr::new("UpdateTeamMemberRoles", "api.team.update_team_member_roles.guest_and_user.app_error", 400));
+            return Err(IErr::new(
+                "UpdateTeamMemberRoles",
+                "api.team.update_team_member_roles.guest_and_user.app_error",
+                400,
+            ));
         }
         if g && a {
-            return Err(IErr::new("UpdateTeamMemberRoles", "api.team.update_team_member_roles.guest_and_admin.app_error", 400));
+            return Err(IErr::new(
+                "UpdateTeamMemberRoles",
+                "api.team.update_team_member_roles.guest_and_admin.app_error",
+                400,
+            ));
         }
         if prev_guest != g {
-            return Err(IErr::new("UpdateTeamMemberRoles", "api.channel.update_team_member_roles.changing_guest_role.app_error", 400));
+            return Err(IErr::new(
+                "UpdateTeamMemberRoles",
+                "api.channel.update_team_member_roles.changing_guest_role.app_error",
+                400,
+            ));
         }
         (m.scheme_guest, m.scheme_user, m.scheme_admin) = (g, u, a);
         m.explicit_roles = explicit.join(" ");
@@ -1255,7 +1336,14 @@ impl Ctx {
     }
 
     /// `UpdateTeamMemberSchemeRoles`.
-    async fn update_team_member_scheme_roles(&self, team_id: &str, user_id: &str, g: bool, u: bool, a: bool) -> IResult<()> {
+    async fn update_team_member_scheme_roles(
+        &self,
+        team_id: &str,
+        user_id: &str,
+        g: bool,
+        u: bool,
+        a: bool,
+    ) -> IResult<()> {
         let mut m = self
             .team_member_row(team_id, user_id)
             .await?
@@ -1278,7 +1366,8 @@ impl Ctx {
     async fn role_by_name(&self, name: &str) -> IResult<Role> {
         match self.app.roles(&[name]).await?.into_iter().next() {
             Some(r) => Ok((*r).clone()),
-            None => Err(IErr::new("GetRoleByName", "app.role.get_by_name.app_error", 400).wrap(not_found("Role", &format!("name={name}")))),
+            None => Err(IErr::new("GetRoleByName", "app.role.get_by_name.app_error", 400)
+                .wrap(not_found("Role", &format!("name={name}")))),
         }
     }
 
@@ -1336,7 +1425,12 @@ impl Ctx {
             }
             flags.insert(channel.id.clone(), (g, u, a));
             if c.favorite == Some(true) {
-                favorites.entry(channel.id.clone()).or_default().push(pref(&user.id, "favorite_channel", &channel.id, "true"));
+                favorites.entry(channel.id.clone()).or_default().push(pref(
+                    &user.id,
+                    "favorite_channel",
+                    &channel.id,
+                    "true",
+                ));
             }
             let mut m = ChannelMember {
                 channel_id: channel.id.clone(),
@@ -1391,7 +1485,8 @@ impl Ctx {
                 if e.id == "app.channel.save_member.exists.app_error" {
                     IErr::new("importUserChannels", "app.channel.save_member.exists.app_error", 400)
                 } else {
-                    IErr::new("importUserChannels", "app.channel.create_direct_channel.internal_error", 500).wrap(e.detailed_error)
+                    IErr::new("importUserChannels", "app.channel.create_direct_channel.internal_error", 500)
+                        .wrap(e.detailed_error)
                 }
             })?;
         }
@@ -1408,14 +1503,17 @@ impl Ctx {
             }
             let (g, u, a) = flags.get(&m.channel_id).copied().unwrap_or((false, true, false));
             if let Err(e) = app.update_member_scheme_roles(&m.channel_id, &user.id, g, u, a).await {
-                warn(&format!("Error updating channel member scheme roles channel_id={} user_id={} err={}", m.channel_id, user.id, e.message));
+                warn(&format!(
+                    "Error updating channel member scheme roles channel_id={} user_id={} err={}",
+                    m.channel_id, user.id, e.message
+                ));
             }
         }
         for c in all.values() {
             if let Some(p) = favorites.get_mut(&c.id) {
-                self.save_preferences(p)
-                    .await
-                    .map_err(|e| IErr::new("BulkImport", "app.import.import_user_channels.save_preferences.error", 500).wrap(e))?;
+                self.save_preferences(p).await.map_err(|e| {
+                    IErr::new("BulkImport", "app.import.import_user_channels.save_preferences.error", 500).wrap(e)
+                })?;
             }
         }
         Ok(())
@@ -1429,13 +1527,19 @@ impl Ctx {
         let (mut g, mut u, mut a) = (false, false, false);
         let mut explicit = vec![];
         let scheme_role = |name: &str| {
-            Err(IErr::new("UpdateChannelMemberRoles", "api.channel.update_channel_member_roles.scheme_role.app_error", 400)
-                .detail(format!("role_name={name}")))
+            Err(IErr::new(
+                "UpdateChannelMemberRoles",
+                "api.channel.update_channel_member_roles.scheme_role.app_error",
+                400,
+            )
+            .detail(format!("role_name={name}")))
         };
         for name in new_roles.split_whitespace() {
             let role = self.role_by_name(name).await?;
             if !role.scheme_managed {
-                if crate::schemes::is_builtin(name) && !["channel_guest", "channel_user", "channel_admin"].contains(&name) {
+                if crate::schemes::is_builtin(name)
+                    && !["channel_guest", "channel_user", "channel_admin"].contains(&name)
+                {
                     return scheme_role(name);
                 }
                 explicit.push(name);
@@ -1514,7 +1618,9 @@ impl Ctx {
                     bot.owner_id = owner.clone();
                 }
                 Err(e) => {
-                    return Err(IErr::new("importBot", "app.import.import_bot.owner_could_not_found.error", 500).p("Owner", owner).wrap(e.text()));
+                    return Err(IErr::new("importBot", "app.import.import_bot.owner_could_not_found.error", 500)
+                        .p("Owner", owner)
+                        .wrap(e.text()));
                 }
             }
         }
@@ -1522,9 +1628,12 @@ impl Ctx {
             match app.create_bot(&Session::default(), bot.clone()).await {
                 Ok(b) => b,
                 Err(e) if e.id == "app.user.save.username_exists.app_error" => {
-                    info(&format!("CreateBot failed with username conflict during import, recovering by linking existing user bot_username={username}"));
+                    info(&format!(
+                        "CreateBot failed with username conflict during import, recovering by linking existing user bot_username={username}"
+                    ));
                     let Some(existing) = self.user_by_username(&username).await? else {
-                        return Err(IErr::new("importBot", "app.import.import_bot.user_not_found.error", 500).wrap(not_found("User", &format!("username={username}"))));
+                        return Err(IErr::new("importBot", "app.import.import_bot.user_not_found.error", 500)
+                            .wrap(not_found("User", &format!("username={username}"))));
                     };
                     app.revoke_all_sessions(&existing.id).await?;
                     app.invalidate_user(&existing.id);
@@ -1532,17 +1641,22 @@ impl Ctx {
                     match app.save_bot(&existing.id, &username, &bot.owner_id, &bot.description).await {
                         Ok(b) => b,
                         Err(save_err) => {
-                            warn(&format!("Bot record save failed during import recovery, attempting update user_id={} err={}", existing.id, save_err.detailed_error));
-                            app.store_bot(&bot)
-                                .await
-                                .map_err(|e| IErr::new("importBot", "app.bot.update.internal_error", 500).wrap(e.detailed_error))?
+                            warn(&format!(
+                                "Bot record save failed during import recovery, attempting update user_id={} err={}",
+                                existing.id, save_err.detailed_error
+                            ));
+                            app.store_bot(&bot).await.map_err(|e| {
+                                IErr::new("importBot", "app.bot.update.internal_error", 500).wrap(e.detailed_error)
+                            })?
                         }
                     }
                 }
                 Err(e) => return Err(e.into()),
             }
         } else if changed {
-            app.store_bot(&bot).await.map_err(|e| IErr::new("importBot", "app.bot.update.app_error", 500).wrap(e.detailed_error))?
+            app.store_bot(&bot)
+                .await
+                .map_err(|e| IErr::new("importBot", "app.bot.update.app_error", 500).wrap(e.detailed_error))?
         } else {
             bot
         };
@@ -1557,7 +1671,10 @@ impl Ctx {
                     app.update_user(u, false, false).await?;
                 }
                 Ok(_) => {}
-                Err(e) => warn(&format!("Failed to fetch bot user for DisplayName update user_id={} err={}", saved.user_id, e.detailed_error)),
+                Err(e) => warn(&format!(
+                    "Failed to fetch bot user for DisplayName update user_id={} err={}",
+                    saved.user_id, e.detailed_error
+                )),
             }
         }
         if let Some(path) = &d.profile_image {
@@ -1571,7 +1688,10 @@ impl Ctx {
         info(&format!("Validating emoji emoji_name={}", d.name.as_deref().unwrap_or_default()));
         if let Err(e) = validate_emoji(d) {
             if e.id() == "model.emoji.system_emoji_name.app_error" {
-                warn(&format!("Skipping emoji import due to name conflict with system emoji emoji_name={}", d.name.as_deref().unwrap_or_default()));
+                warn(&format!(
+                    "Skipping emoji import due to name conflict with system emoji emoji_name={}",
+                    d.name.as_deref().unwrap_or_default()
+                ));
                 return Ok(());
             }
             return Err(e);
@@ -1581,11 +1701,12 @@ impl Ctx {
         }
         let name = d.name.clone().unwrap_or_default();
         info(&format!("Importing emoji emoji_name={name}"));
-        let existing: Option<Emoji> = sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE Name = $1 AND DeleteAt = 0", Emoji::SELECT)))
-            .bind(&name)
-            .fetch_optional(&app.db)
-            .await
-            .map_err(|e| IErr::new("importEmoji", "app.emoji.get_by_name.app_error", 500).wrap(e))?;
+        let existing: Option<Emoji> =
+            sqlx::query_as(sqlx::AssertSqlSafe(format!("{} WHERE Name = $1 AND DeleteAt = 0", Emoji::SELECT)))
+                .bind(&name)
+                .fetch_optional(&app.db)
+                .await
+                .map_err(|e| IErr::new("importEmoji", "app.emoji.get_by_name.app_error", 500).wrap(e))?;
         let exists = existing.is_some();
         let emoji = existing.unwrap_or_else(|| {
             let now = now_ms();
@@ -1597,14 +1718,17 @@ impl Ctx {
             None => std::fs::read(d.image.as_deref().unwrap_or_default()).map_err(|e| bad_file(e.to_string()))?,
         };
         if bytes.len() as u64 > MAX_EMOJI_FILE_SIZE {
-            return Err(IErr::new("WriteFile", "api.file.write_file.app_error", 500).wrap("unable write the data in the file: read limit exceeded"));
+            return Err(IErr::new("WriteFile", "api.file.write_file.app_error", 500)
+                .wrap("unable write the data in the file: read limit exceeded"));
         }
         app.files
             .write(&format!("emoji/{}/image", emoji.id), bytes.into())
             .await
             .map_err(|e| IErr::new("WriteFile", "api.file.write_file.app_error", 500).wrap(e))?;
         if !exists {
-            db::insert(&app.db, &emoji).await.map_err(|e| IErr::new("importEmoji", "api.emoji.create.internal_error", 400).wrap(e))?;
+            db::insert(&app.db, &emoji)
+                .await
+                .map_err(|e| IErr::new("importEmoji", "api.emoji.create.internal_error", 400).wrap(e))?;
         }
         app.caches.emoji_by_name.remove(emoji.name.as_str());
         app.caches.emoji_by_id.remove(emoji.id.as_str());
@@ -1618,7 +1742,8 @@ impl Ctx {
         let app = &self.app;
         let users = app.users(&[a.to_string(), b.to_string()]).await?;
         let invalid = || {
-            IErr::new("CreateDirectChannel", "api.channel.create_direct_channel.invalid_user.app_error", 400).detail(format!("No users found for ids: {a}. {b}"))
+            IErr::new("CreateDirectChannel", "api.channel.create_direct_channel.invalid_user.app_error", 400)
+                .detail(format!("No users found for ids: {a}. {b}"))
         };
         let user = users.iter().find(|u| u.id == a).ok_or_else(invalid)?.clone();
         let other = users.iter().find(|u| u.id == b).ok_or_else(invalid)?.clone();
@@ -1649,9 +1774,14 @@ impl Ctx {
             .await?;
         }
         for u in &pair {
-            app.log_join(&u.id, &c.id)
-                .await
-                .map_err(|e| IErr::new("createDirectChannelWithUser", "app.channel_member_history.log_join_event.internal_error", 500).wrap(e.detailed_error))?;
+            app.log_join(&u.id, &c.id).await.map_err(|e| {
+                IErr::new(
+                    "createDirectChannelWithUser",
+                    "app.channel_member_history.log_join_event.internal_error",
+                    500,
+                )
+                .wrap(e.detailed_error)
+            })?;
         }
         Ok(c)
     }
@@ -1698,9 +1828,10 @@ impl Ctx {
                 ..Default::default()
             })
             .await?;
-            app.log_join(&u.id, &c.id)
-                .await
-                .map_err(|e| IErr::new("createGroupChannel", "app.channel_member_history.log_join_event.internal_error", 500).wrap(e.detailed_error))?;
+            app.log_join(&u.id, &c.id).await.map_err(|e| {
+                IErr::new("createGroupChannel", "app.channel_member_history.log_join_event.internal_error", 500)
+                    .wrap(e.detailed_error)
+            })?;
         }
         Ok(c)
     }
@@ -1721,14 +1852,15 @@ impl Ctx {
         for name in &members {
             match user_map.get(&name.to_lowercase()) {
                 Some(u) => ids.push(u.id.clone()),
-                None => warn(&format!("Skipping direct channel member not found on destination during scoped import username={name}")),
+                None => warn(&format!(
+                    "Skipping direct channel member not found on destination during scoped import username={name}"
+                )),
             }
         }
         let channel = match ids.len() {
-            2 => self
-                .create_direct_channel(&ids[0], &ids[1])
-                .await
-                .map_err(|e| IErr::bad("app.import.import_direct_channel.create_direct_channel.error").wrap(e.text()))?,
+            2 => self.create_direct_channel(&ids[0], &ids[1]).await.map_err(|e| {
+                IErr::bad("app.import.import_direct_channel.create_direct_channel.error").wrap(e.text())
+            })?,
             n if n > 2 => self
                 .create_group_channel(&ids)
                 .await
@@ -1747,13 +1879,15 @@ impl Ctx {
         .await
         .map_err(|e| IErr::bad("app.import.import_direct_channel.get_channel_members.error").wrap(e))?;
         let existing: HashMap<String, i64> = if active > 0 {
-            sqlx::query_as::<_, (String, i64)>("SELECT UserId, COALESCE(LastViewedAt, 0) FROM ChannelMembers WHERE ChannelId = $1 LIMIT 100")
-                .bind(&channel.id)
-                .fetch_all(&app.db)
-                .await
-                .map_err(|e| IErr::bad("app.import.import_direct_channel.get_channel_members.error").wrap(e))?
-                .into_iter()
-                .collect()
+            sqlx::query_as::<_, (String, i64)>(
+                "SELECT UserId, COALESCE(LastViewedAt, 0) FROM ChannelMembers WHERE ChannelId = $1 LIMIT 100",
+            )
+            .bind(&channel.id)
+            .fetch_all(&app.db)
+            .await
+            .map_err(|e| IErr::bad("app.import.import_direct_channel.get_channel_members.error").wrap(e))?
+            .into_iter()
+            .collect()
         } else {
             HashMap::new()
         };
@@ -1767,14 +1901,18 @@ impl Ctx {
         let left: HashSet<String> = if candidates.is_empty() {
             HashSet::new()
         } else {
-            sqlx::query_scalar("SELECT DISTINCT UserId FROM ChannelMemberHistory WHERE ChannelId = $1 AND UserId = ANY($2)")
-                .bind(&channel.id)
-                .bind(&candidates)
-                .fetch_all(&app.db)
-                .await
-                .map_err(|e| IErr::new("BulkImport", "app.import.import_direct_channel.get_ever_members.error", 500).wrap(e))?
-                .into_iter()
-                .collect()
+            sqlx::query_scalar(
+                "SELECT DISTINCT UserId FROM ChannelMemberHistory WHERE ChannelId = $1 AND UserId = ANY($2)",
+            )
+            .bind(&channel.id)
+            .bind(&candidates)
+            .fetch_all(&app.db)
+            .await
+            .map_err(|e| {
+                IErr::new("BulkImport", "app.import.import_direct_channel.get_ever_members.error", 500).wrap(e)
+            })?
+            .into_iter()
+            .collect()
         };
         let mut updates = vec![];
         for p in participants {
@@ -1844,12 +1982,20 @@ impl Ctx {
                     match app.save_member(row).await {
                         Ok(_) => {
                             if let Err(e) = app.log_join(&u.id, &channel.id).await {
-                                warn(&format!("Failed to log channel member history join event during import err={}", e.detailed_error));
+                                warn(&format!(
+                                    "Failed to log channel member history join event during import err={}",
+                                    e.detailed_error
+                                ));
                             }
                         }
                         Err(e) if e.id == "app.channel.save_member.exists.app_error" => {}
                         Err(e) => {
-                            return Err(IErr::new("BulkImport", "app.import.import_direct_channel.save_member.error", 500).wrap(e.detailed_error));
+                            return Err(IErr::new(
+                                "BulkImport",
+                                "app.import.import_direct_channel.save_member.error",
+                                500,
+                            )
+                            .wrap(e.detailed_error));
                         }
                     }
                 }
@@ -1859,7 +2005,9 @@ impl Ctx {
             updates.push(m);
         }
         for m in &updates {
-            app.update_member(m).await.map_err(|e| IErr::bad("app.import.import_direct_channel.create_group_channel.error").wrap(e.message))?;
+            app.update_member(m).await.map_err(|e| {
+                IErr::bad("app.import.import_direct_channel.create_group_channel.error").wrap(e.message)
+            })?;
         }
         if !updates.is_empty() {
             app.invalidate_channel_members_cache(&channel.id);
@@ -1874,7 +2022,11 @@ impl Ctx {
             let Some(shower) = user_map.get(&name.to_lowercase()) else { continue };
             match channel.r#type.as_str() {
                 "D" => {
-                    let other = user_map.iter().find(|(k, _)| *k != name).map(|(_, u)| u.id.clone()).unwrap_or_else(|| shower.id.clone());
+                    let other = user_map
+                        .iter()
+                        .find(|(k, _)| *k != name)
+                        .map(|(_, u)| u.id.clone())
+                        .unwrap_or_else(|| shower.id.clone());
                     prefs.push(pref(&shower.id, "direct_channel_show", &other, "true"));
                 }
                 "G" => prefs.push(pref(&shower.id, "group_channel_show", &channel.id, "true")),
@@ -1894,9 +2046,9 @@ impl Ctx {
         if let Some(h) = &d.header {
             let mut c = channel.clone();
             c.header = h.clone();
-            app.store_update_channel(&mut c)
-                .await
-                .map_err(|e| IErr::bad("app.import.import_direct_channel.update_header_failed.error").wrap(e.message))?;
+            app.store_update_channel(&mut c).await.map_err(|e| {
+                IErr::bad("app.import.import_direct_channel.update_header_failed.error").wrap(e.message)
+            })?;
         }
         Ok(())
     }
@@ -1923,7 +2075,11 @@ impl Ctx {
         let mut roots: Vec<(String, i64)> = vec![];
         for (i, p) in posts.iter_mut().enumerate() {
             if !p.id.is_empty() && !p.is_remote() {
-                return Err((Some(i), IErr::new("importMultiplePostLines", "app.post.save.existing.app_error", 400).wrap(format!("invalid input: entity: Post field: id value: {}", p.id))));
+                return Err((
+                    Some(i),
+                    IErr::new("importMultiplePostLines", "app.post.save.existing.app_error", 400)
+                        .wrap(format!("invalid input: entity: Post field: id value: {}", p.id)),
+                ));
             }
             // Post.PreSave leaves RemoteId nil: an imported post's RemoteId is NULL, as Go's SaveMultiple writes it.
             p.pre_save(now_ms());
@@ -1933,7 +2089,12 @@ impl Ctx {
             match channels.iter_mut().find(|(c, _)| *c == p.channel_id) {
                 None => channels.push((
                     p.channel_id.clone(),
-                    Counts { all: count, root: if root { count } else { 0 }, last: p.create_at, last_root: if root { p.create_at } else { 0 } },
+                    Counts {
+                        all: count,
+                        root: if root { count } else { 0 },
+                        last: p.create_at,
+                        last_root: if root { p.create_at } else { 0 },
+                    },
                 )),
                 Some((_, c)) => {
                     c.all += count;
@@ -1951,7 +2112,13 @@ impl Ctx {
                 }
             }
         }
-        let fail = |e: sqlx::Error| (None, IErr::new("importMultiplePostLines", "app.post.save.app_error", 500).wrap(format!("failed to save Post: {e}")));
+        let fail = |e: sqlx::Error| {
+            (
+                None,
+                IErr::new("importMultiplePostLines", "app.post.save.app_error", 500)
+                    .wrap(format!("failed to save Post: {e}")),
+            )
+        };
         let mut tx = app.db.begin().await.map_err(fail)?;
         for p in posts.iter() {
             p.bind(sqlx::query(Post::INSERT)).execute(&mut *tx).await.map_err(fail)?;
@@ -1964,7 +2131,13 @@ impl Ctx {
                 None => by_root.push((p.root_id.clone(), vec![p])),
             }
         }
-        let thread_err = |e: sqlx::Error| (None, IErr::new("importMultiplePostLines", "app.post.save.app_error", 500).wrap(format!("update thread from posts failed: {e}")));
+        let thread_err = |e: sqlx::Error| {
+            (
+                None,
+                IErr::new("importMultiplePostLines", "app.post.save.app_error", 500)
+                    .wrap(format!("update thread from posts failed: {e}")),
+            )
+        };
         for (root, replies) in &by_root {
             let found: Option<(sqlx::types::Json<Vec<String>>, i64, i64)> = sqlx::query_as(
                 "SELECT COALESCE(Participants, '[]'), COALESCE(ReplyCount, 0), COALESCE(LastReplyAt, 0) FROM Threads WHERE PostId = $1",
@@ -1982,12 +2155,13 @@ impl Ctx {
                     .fetch_all(&mut *tx)
                     .await
                     .map_err(thread_err)?;
-                    let (count, last): (i64, i64) =
-                        sqlx::query_as("SELECT COUNT(Id), COALESCE(MAX(CreateAt), 0) FROM Posts WHERE RootId = $1 AND DeleteAt = 0")
-                            .bind(root)
-                            .fetch_one(&mut *tx)
-                            .await
-                            .map_err(thread_err)?;
+                    let (count, last): (i64, i64) = sqlx::query_as(
+                        "SELECT COUNT(Id), COALESCE(MAX(CreateAt), 0) FROM Posts WHERE RootId = $1 AND DeleteAt = 0",
+                    )
+                    .bind(root)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(thread_err)?;
                     let team: String = sqlx::query_scalar("SELECT COALESCE(TeamId, '') FROM Channels WHERE Id = $1")
                         .bind(&replies[0].channel_id)
                         .fetch_optional(&mut *tx)
@@ -2050,7 +2224,9 @@ impl Ctx {
             }
         }
         for (root, t) in &roots {
-            if let Err(e) = sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2").bind(t).bind(root).execute(&app.db).await {
+            if let Err(e) =
+                sqlx::query("UPDATE Posts SET UpdateAt = $1 WHERE Id = $2").bind(t).bind(root).execute(&app.db).await
+            {
                 warn(&format!("Error updating Post UpdateAt. err={e}"));
             }
         }
@@ -2062,7 +2238,9 @@ impl Ctx {
         let app = &self.app;
         let max = app.max_post_size().await as usize;
         let update_at = now_ms();
-        let err = |i: Option<usize>, e: String| (i, IErr::new("importMultiplePostLines", "app.post.overwrite.app_error", 500).wrap(e));
+        let err = |i: Option<usize>, e: String| {
+            (i, IErr::new("importMultiplePostLines", "app.post.overwrite.app_error", 500).wrap(e))
+        };
         for (i, p) in posts.iter_mut().enumerate() {
             p.update_at = update_at;
             app.validate_post(p, max).map_err(|e| err(Some(i), e.message))?;
@@ -2137,12 +2315,14 @@ impl Ctx {
         let mut tx = self.app.db.begin().await.map_err(|e| e.to_string())?;
         for m in members {
             let now = now_ms();
-            let found: Option<i64> = sqlx::query_scalar("SELECT COALESCE(LastUpdated, 0) FROM ThreadMemberships WHERE PostId = $1 AND UserId = $2")
-                .bind(&m.post_id)
-                .bind(&m.user_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(|e| format!("failed to get thread membership: {e}"))?;
+            let found: Option<i64> = sqlx::query_scalar(
+                "SELECT COALESCE(LastUpdated, 0) FROM ThreadMemberships WHERE PostId = $1 AND UserId = $2",
+            )
+            .bind(&m.post_id)
+            .bind(&m.user_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(|e| format!("failed to get thread membership: {e}"))?;
             match found {
                 Some(last_updated) if last_updated > m.last_viewed => continue,
                 Some(_) => {
@@ -2193,14 +2373,32 @@ impl Ctx {
                     match self.user_by_username(&lookup).await {
                         Ok(Some(u)) => u,
                         Ok(None) if self.deactivate_missing_users => {
-                            warn(&format!("Skipping thread follower not found on destination during scoped import username={name}"));
+                            warn(&format!(
+                                "Skipping thread follower not found on destination during scoped import username={name}"
+                            ));
                             continue;
                         }
                         Ok(None) => {
-                            return Err((line, IErr::new("importMultiplePostLines", "app.import.get_users_by_username.some_users_not_found.error", 400)
-                                .wrap(format!("failed to find User: {}", not_found("User", &format!("username={lookup}"))))));
+                            return Err((
+                                line,
+                                IErr::new(
+                                    "importMultiplePostLines",
+                                    "app.import.get_users_by_username.some_users_not_found.error",
+                                    400,
+                                )
+                                .wrap(format!(
+                                    "failed to find User: {}",
+                                    not_found("User", &format!("username={lookup}"))
+                                )),
+                            ));
                         }
-                        Err(e) => return Err((line, IErr::new("extractThreadMembers", "app.user.get_by_username.app_error", 500).wrap(e.text()))),
+                        Err(e) => {
+                            return Err((
+                                line,
+                                IErr::new("extractThreadMembers", "app.user.get_by_username.app_error", 500)
+                                    .wrap(e.text()),
+                            ));
+                        }
                     }
                 }
             };
@@ -2227,7 +2425,8 @@ impl Ctx {
         if r.remote_id.is_none() {
             r.remote_id = Some(String::new());
         }
-        let invalid = |f: &str| Err(IErr::new("Reaction.IsValid", &format!("model.reaction.is_valid.{f}.app_error"), 400));
+        let invalid =
+            |f: &str| Err(IErr::new("Reaction.IsValid", &format!("model.reaction.is_valid.{f}.app_error"), 400));
         if !is_valid_id(&r.user_id) {
             return invalid("user_id");
         }
@@ -2240,12 +2439,20 @@ impl Ctx {
         if !name_ok {
             return invalid("emoji_name");
         }
-        let wrap = |e: sqlx::Error| IErr::new("importReaction", "app.reaction.save.save.app_error", 500).wrap(format!("failed while saving reaction or updating post: {e}"));
+        let wrap = |e: sqlx::Error| {
+            IErr::new("importReaction", "app.reaction.save.save.app_error", 500)
+                .wrap(format!("failed while saving reaction or updating post: {e}"))
+        };
         let mut tx = self.app.db.begin().await.map_err(wrap)?;
         if r.channel_id.is_empty() {
-            let c: Option<String> = sqlx::query_scalar("SELECT ChannelId FROM Posts WHERE Id = $1").bind(&r.post_id).fetch_optional(&mut *tx).await.map_err(wrap)?;
+            let c: Option<String> = sqlx::query_scalar("SELECT ChannelId FROM Posts WHERE Id = $1")
+                .bind(&r.post_id)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(wrap)?;
             let Some(c) = c else {
-                return Err(IErr::new("importReaction", "app.reaction.save.save.app_error", 500).wrap(not_found("Post", &r.post_id)));
+                return Err(IErr::new("importReaction", "app.reaction.save.save.app_error", 500)
+                    .wrap(not_found("Post", &r.post_id)));
             };
             r.channel_id = c;
         }
@@ -2286,7 +2493,8 @@ impl Ctx {
     async fn import_reaction(&self, d: &ReactionData, post: &Post) -> IResult<()> {
         validate_reaction(d, post.create_at)?;
         let name = d.user.clone().unwrap_or_default();
-        let lookup_err = |e: IErr| IErr::new("importReaction", "app.user.get_by_username.app_error", 500).wrap(e.text());
+        let lookup_err =
+            |e: IErr| IErr::new("importReaction", "app.user.get_by_username.app_error", 500).wrap(e.text());
         let mut user = self.user_by_username(&name).await.map_err(lookup_err)?;
         if user.is_none()
             && let Some(dest) = self.report.lookup(&name)
@@ -2295,12 +2503,15 @@ impl Ctx {
         }
         let Some(user) = user else {
             if self.deactivate_missing_users {
-                warn(&format!("Skipping reaction from user not found on destination during scoped import username={name}"));
+                warn(&format!(
+                    "Skipping reaction from user not found on destination during scoped import username={name}"
+                ));
                 return Ok(());
             }
-            return Err(IErr::bad("app.import.import_post.user_not_found.error")
-                .p("Username", &name)
-                .wrap(format!("failed to find User: {}", not_found("User", &format!("username={}", name.to_lowercase())))));
+            return Err(IErr::bad("app.import.import_post.user_not_found.error").p("Username", &name).wrap(format!(
+                "failed to find User: {}",
+                not_found("User", &format!("username={}", name.to_lowercase()))
+            )));
         };
         self.save_reaction(Reaction {
             user_id: user.id,
@@ -2327,7 +2538,11 @@ impl Ctx {
             }
             None => {
                 let meta = std::fs::metadata(&path).map_err(|e| bad_file(format!("open {path}: {e}")))?;
-                let bytes = if meta.len() > max { vec![] } else { std::fs::read(&path).map_err(|e| bad_file(format!("open {path}: {e}")))? };
+                let bytes = if meta.len() > max {
+                    vec![]
+                } else {
+                    std::fs::read(&path).map_err(|e| bad_file(format!("open {path}: {e}")))?
+                };
                 info(&format!("Preparing file upload from file system file_name={path} file_size={}", meta.len()));
                 (path.clone(), meta.len() as i64, bytes)
             }
@@ -2346,14 +2561,15 @@ impl Ctx {
                 if f.name != base || f.size != size {
                     continue;
                 }
-                let stored = app
-                    .files
-                    .read(&f.path)
-                    .await
-                    .map_err(|e| IErr::bad("app.import.attachment.file_upload.error").p("FilePath", &path).wrap(e))?;
+                let stored =
+                    app.files.read(&f.path).await.map_err(|e| {
+                        IErr::bad("app.import.attachment.file_upload.error").p("FilePath", &path).wrap(e)
+                    })?;
                 use sha2::Digest;
                 if sha2::Sha256::digest(&stored) == sha2::Sha256::digest(&bytes) {
-                    info(&format!("Skipping uploading of file because name already exists and content matches file_name={name}"));
+                    info(&format!(
+                        "Skipping uploading of file because name already exists and content matches file_name={name}"
+                    ));
                     return Ok(f);
                 }
                 info(&format!("File contents don't match, will re-upload file_name={name}"));
@@ -2378,7 +2594,12 @@ impl Ctx {
     }
 
     /// `uploadAttachments`: the ids of the post's files after the import (failures only logged).
-    async fn upload_attachments(&self, attachments: &Option<Vec<AttachmentData>>, post: &Post, team_id: &str) -> Option<Vec<String>> {
+    async fn upload_attachments(
+        &self,
+        attachments: &Option<Vec<AttachmentData>>,
+        post: &Post,
+        team_id: &str,
+    ) -> Option<Vec<String>> {
         let list = attachments.as_ref()?;
         let mut ids: Vec<String> = vec![];
         for a in list {
@@ -2407,7 +2628,7 @@ impl Ctx {
                 warn(&format!("Error while permanently deleting file info file_id={old} err={e}"));
             }
         }
-        post.file_ids = crate::model::JsonText(ids);
+        post.file_ids = crate::model::FileIds(ids, false);
     }
 
     /// `updateFileInfoWithPostId`.
@@ -2424,11 +2645,17 @@ impl Ctx {
             .await;
             match r {
                 Ok(r) if r.rows_affected() == 0 => crate::logs::error(
-                    &format!("Error attaching files to post. post_id={} err={}", post.id, not_found("FileInfo", &format!("<{id}, {}, {}>", post.id, post.user_id))),
+                    &format!(
+                        "Error attaching files to post. post_id={} err={}",
+                        post.id,
+                        not_found("FileInfo", &format!("<{id}, {}, {}>", post.id, post.user_id))
+                    ),
                     &[],
                 ),
                 Ok(_) => {}
-                Err(e) => crate::logs::error(&format!("Error attaching files to post. post_id={} err={e}", post.id), &[]),
+                Err(e) => {
+                    crate::logs::error(&format!("Error attaching files to post. post_id={} err={e}", post.id), &[])
+                }
             }
         }
         if !post.file_ids.0.is_empty() {
@@ -2437,7 +2664,12 @@ impl Ctx {
     }
 
     /// The flagged-post preferences of a post.
-    async fn save_flags(&self, post_id: &str, flagged_by: &Option<Vec<String>>, users: &HashMap<String, User>) -> IResult<()> {
+    async fn save_flags(
+        &self,
+        post_id: &str,
+        flagged_by: &Option<Vec<String>>,
+        users: &HashMap<String, User>,
+    ) -> IResult<()> {
         let mut prefs: Vec<Preference> = flagged_by
             .iter()
             .flatten()
@@ -2445,7 +2677,9 @@ impl Ctx {
             .map(|u| pref(&u.id, "flagged_post", post_id, "true"))
             .collect();
         if !prefs.is_empty() {
-            self.save_preferences(&mut prefs).await.map_err(|e| IErr::new("BulkImport", "app.import.import_post.save_preferences.error", 500).wrap(e))?;
+            self.save_preferences(&mut prefs)
+                .await
+                .map_err(|e| IErr::new("BulkImport", "app.import.import_post.save_preferences.error", 500).wrap(e))?;
         }
         Ok(())
     }
@@ -2466,7 +2700,9 @@ impl Ctx {
         for r in data {
             let uname = r.user.clone().unwrap_or_default();
             let Some(user) = users.get(&uname.to_lowercase()) else {
-                warn(&format!("Skipping reply from user not found on destination during scoped import username={uname}"));
+                warn(&format!(
+                    "Skipping reply from user not found on destination during scoped import username={uname}"
+                ));
                 continue;
             };
             let mut create_at = r.create_at.unwrap_or_default();
@@ -2482,7 +2718,8 @@ impl Ctx {
                 .posts_created_at(&post.channel_id, create_at)
                 .await
                 .map_err(|e| IErr::new("importReplies", "app.post.get_posts_created_at.app_error", 500).wrap(e))?;
-            let mut reply = existing.into_iter().find(|p| p.message == message && p.root_id == post.id).unwrap_or_default();
+            let mut reply =
+                existing.into_iter().find(|p| p.message == message && p.root_id == post.id).unwrap_or_default();
             reply.user_id = user.id.clone();
             reply.channel_id = post.channel_id.clone();
             reply.root_id = post.id.clone();
@@ -2565,7 +2802,8 @@ impl Ctx {
             return Ok(());
         }
         info(&format!("Importing post lines count={} first_line={}", lines.len(), lines[0].line));
-        let posts: Vec<(&PostData, usize)> = lines.iter().filter_map(|l| l.data.post.as_ref().map(|p| (p, l.line))).collect();
+        let posts: Vec<(&PostData, usize)> =
+            lines.iter().filter_map(|l| l.data.post.as_ref().map(|p| (p, l.line))).collect();
         let mut names = vec![];
         let mut follower_names = vec![];
         let mut team_names = vec![];
@@ -2600,11 +2838,21 @@ impl Ctx {
                     channels.insert(key, None);
                 }
                 Ok(None) => {
-                    return Err((0, IErr::bad("app.import.import_post.channel_not_found.error")
-                        .p("ChannelName", &channel)
-                        .wrap(not_found("Channel", &format!("TeamId={}&Name={channel}", team.id)))));
+                    return Err((
+                        0,
+                        IErr::bad("app.import.import_post.channel_not_found.error")
+                            .p("ChannelName", &channel)
+                            .wrap(not_found("Channel", &format!("TeamId={}&Name={channel}", team.id))),
+                    ));
                 }
-                Err(e) => return Err((0, IErr::bad("app.import.import_post.channel_not_found.error").p("ChannelName", &channel).wrap(e.text()))),
+                Err(e) => {
+                    return Err((
+                        0,
+                        IErr::bad("app.import.import_post.channel_not_found.error")
+                            .p("ChannelName", &channel)
+                            .wrap(e.text()),
+                    ));
+                }
             }
         }
 
@@ -2616,10 +2864,14 @@ impl Ctx {
         for (p, line) in &posts {
             let team_name = p.team.as_deref().unwrap_or_default().to_lowercase();
             let Some(team) = teams.get(&team_name) else {
-                warn(&format!("Skipping post for team not found on destination during scoped import team={team_name} line_number={line}"));
+                warn(&format!(
+                    "Skipping post for team not found on destination during scoped import team={team_name} line_number={line}"
+                ));
                 continue;
             };
-            let Some(Some(channel)) = channels.get(&(team_name.clone(), p.channel.as_deref().unwrap_or_default().to_lowercase())) else {
+            let Some(Some(channel)) =
+                channels.get(&(team_name.clone(), p.channel.as_deref().unwrap_or_default().to_lowercase()))
+            else {
                 warn(&format!(
                     "Skipping post for channel not found on destination during scoped import channel={} line_number={line}",
                     p.channel.as_deref().unwrap_or_default()
@@ -2635,10 +2887,9 @@ impl Ctx {
             };
             let message = p.message.clone().unwrap_or_default();
             let create_at = p.create_at.unwrap_or_default();
-            let existing = self
-                .posts_created_at(&channel.id, create_at)
-                .await
-                .map_err(|e| (*line, IErr::new("importMultiplePostLines", "app.post.get_posts_created_at.app_error", 500).wrap(e)))?;
+            let existing = self.posts_created_at(&channel.id, create_at).await.map_err(|e| {
+                (*line, IErr::new("importMultiplePostLines", "app.post.get_posts_created_at.app_error", 500).wrap(e))
+            })?;
             let mut post = existing.into_iter().find(|x| x.message == message).unwrap_or_default();
             post.channel_id = channel.id.clone();
             post.message = message;
@@ -2694,7 +2945,8 @@ impl Ctx {
         mut with_data: Vec<PostAndData>,
         users: &HashMap<String, User>,
     ) -> LineResult {
-        let line_of = |list: &[(Post, usize)], i: Option<usize>| i.and_then(|i| list.get(i)).map(|(_, l)| *l).unwrap_or(0);
+        let line_of =
+            |list: &[(Post, usize)], i: Option<usize>| i.and_then(|i| list.get(i)).map(|(_, l)| *l).unwrap_or(0);
         if !create.is_empty() {
             let mut posts: Vec<Post> = create.iter().map(|(p, _)| p.clone()).collect();
             // The keys before saving: the id is the only thing saving changes in them... and UpdateAt.
@@ -2710,7 +2962,10 @@ impl Ctx {
                 }
             }
             if let Err(e) = self.save_thread_memberships(&mut members).await {
-                return Err((0, IErr::new("importMultiplePostLines", "app.post.save.thread_membership.app_error", 500).wrap(e)));
+                return Err((
+                    0,
+                    IErr::new("importMultiplePostLines", "app.post.save.thread_membership.app_error", 500).wrap(e),
+                ));
             }
             // The created posts get their ids in the data list (matched by their key).
             let mut by_key: HashMap<String, &Post> = posts.iter().map(|p| (post_key(p), p)).collect();
@@ -2725,7 +2980,10 @@ impl Ctx {
             return Err((line_of(&overwrite, i), e));
         }
         if let Err(e) = self.maintain_thread_memberships(&members_to_overwrite).await {
-            return Err((0, IErr::new("importMultiplePostLines", "app.post.save.thread_membership.app_error", 500).wrap(e)));
+            return Err((
+                0,
+                IErr::new("importMultiplePostLines", "app.post.save.thread_membership.app_error", 500).wrap(e),
+            ));
         }
         for d in &with_data {
             self.save_flags(&d.post.id, &d.flagged_by, users).await.map_err(|e| (d.line, e))?;
@@ -2754,7 +3012,8 @@ impl Ctx {
         if self.dry_run {
             return Ok(());
         }
-        let posts: Vec<(&DirectPostData, usize)> = lines.iter().filter_map(|l| l.data.direct_post.as_ref().map(|p| (p, l.line))).collect();
+        let posts: Vec<(&DirectPostData, usize)> =
+            lines.iter().filter_map(|l| l.data.direct_post.as_ref().map(|p| (p, l.line))).collect();
         let mut names = vec![];
         let mut follower_names = vec![];
         for (p, _) in &posts {
@@ -2783,12 +3042,15 @@ impl Ctx {
             }
             let channel = match ids.len() {
                 2 => self.app.get_or_create_direct(&Session::default(), &ids[0], &ids[1]).await.map_err(|e| {
-                    (*line, IErr::bad("app.import.import_direct_post.create_direct_channel.error").wrap(IErr::from(e).text()))
+                    (
+                        *line,
+                        IErr::bad("app.import.import_direct_post.create_direct_channel.error")
+                            .wrap(IErr::from(e).text()),
+                    )
                 })?,
-                n if n > 2 => self
-                    .create_group_channel(&ids)
-                    .await
-                    .map_err(|e| (*line, IErr::bad("app.import.import_direct_post.create_group_channel.error").wrap(e.text())))?,
+                n if n > 2 => self.create_group_channel(&ids).await.map_err(|e| {
+                    (*line, IErr::bad("app.import.import_direct_post.create_group_channel.error").wrap(e.text()))
+                })?,
                 _ => {
                     warn(&format!("Not enough users to create a direct channel line_number={line}"));
                     continue;
@@ -2893,28 +3155,38 @@ impl Ctx {
                 continue;
             }
             let fail = match svc.as_str() {
-                "ldap" if !cfg.bool("LdapSettings.Enable") => Some("export contains LDAP users but LDAP is not enabled on the destination"),
-                "ldap" if cfg.str("LdapSettings.IdAttribute").is_empty() => {
-                    Some("LdapSettings.IdAttribute is empty on the destination — auth_data matching will fail for LDAP users")
+                "ldap" if !cfg.bool("LdapSettings.Enable") => {
+                    Some("export contains LDAP users but LDAP is not enabled on the destination")
                 }
-                "saml" if !cfg.bool("SamlSettings.Enable") => Some("export contains SAML users but SAML is not enabled on the destination"),
+                "ldap" if cfg.str("LdapSettings.IdAttribute").is_empty() => Some(
+                    "LdapSettings.IdAttribute is empty on the destination — auth_data matching will fail for LDAP users",
+                ),
+                "saml" if !cfg.bool("SamlSettings.Enable") => {
+                    Some("export contains SAML users but SAML is not enabled on the destination")
+                }
                 "gitlab" if !cfg.bool("GitLabSettings.Enable") => {
                     Some("export contains GitLab OAuth users but GitLab OAuth is not enabled on the destination")
                 }
                 "google" if !cfg.bool("GoogleSettings.Enable") => {
                     Some("export contains Google OAuth users but Google OAuth is not enabled on the destination")
                 }
-                "office365" if !cfg.bool("Office365Settings.Enable") => {
-                    Some("export contains Office 365 OAuth users but Office 365 OAuth is not enabled on the destination")
+                "office365" if !cfg.bool("Office365Settings.Enable") => Some(
+                    "export contains Office 365 OAuth users but Office 365 OAuth is not enabled on the destination",
+                ),
+                "openid" if !cfg.bool("OpenIdSettings.Enable") => {
+                    Some("export contains OpenID users but OpenID is not enabled on the destination")
                 }
-                "openid" if !cfg.bool("OpenIdSettings.Enable") => Some("export contains OpenID users but OpenID is not enabled on the destination"),
                 _ => None,
             };
             if let Some(msg) = fail {
                 if skip_preflight {
-                    warn(&format!("PREFLIGHT (skipped): {msg} — proceeding anyway as --skip-preflight was set auth_service={svc}"));
+                    warn(&format!(
+                        "PREFLIGHT (skipped): {msg} — proceeding anyway as --skip-preflight was set auth_service={svc}"
+                    ));
                 } else {
-                    return Err(IErr::bad("app.import.preflight.auth_provider_not_configured.error").p("Service", &svc).p("Detail", msg));
+                    return Err(IErr::bad("app.import.preflight.auth_provider_not_configured.error")
+                        .p("Service", &svc)
+                        .p("Detail", msg));
                 }
             }
         }
@@ -2926,7 +3198,10 @@ impl Ctx {
     pub async fn pre_create_sso_users(&self, jsonl: &str) -> usize {
         let (users, n) = self.user_lines(jsonl).await;
         for u in users {
-            let (Some(username), Some(_), Some(_), Some(data)) = (&u.username, &u.email, &u.auth_service, &u.auth_data) else { continue };
+            let (Some(username), Some(_), Some(_), Some(data)) = (&u.username, &u.email, &u.auth_service, &u.auth_data)
+            else {
+                continue;
+            };
             if data.is_empty() || self.dry_run {
                 continue;
             }
@@ -2949,7 +3224,12 @@ impl Ctx {
             d.auth_service.clone().unwrap_or_default(),
             d.auth_data.clone().unwrap_or_default(),
         );
-        if self.user_by_auth(&data, &service).await.map_err(|e| IErr::new("preCreateSSOUser", "app.user.get_by_auth.app_error", 500).wrap(e.text()))?.is_some() {
+        if self
+            .user_by_auth(&data, &service)
+            .await
+            .map_err(|e| IErr::new("preCreateSSOUser", "app.user.get_by_auth.app_error", 500).wrap(e.text()))?
+            .is_some()
+        {
             return Ok(());
         }
         if !self.deactivate_missing_users

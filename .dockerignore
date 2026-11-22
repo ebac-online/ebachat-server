@@ -1,0 +1,7 @@
+.git
+.claude
+target
+dev
+docs
+Dockerfile
+.dockerignore

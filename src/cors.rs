@@ -51,11 +51,8 @@ impl Cors {
                 None => c.origins.push(o),
             }
         }
-        let exposed: Vec<String> = cfg
-            .str("ServiceSettings.CorsExposedHeaders")
-            .split_whitespace()
-            .map(canonical)
-            .collect();
+        let exposed: Vec<String> =
+            cfg.str("ServiceSettings.CorsExposedHeaders").split_whitespace().map(canonical).collect();
         if !exposed.is_empty() {
             c.exposed = HeaderValue::from_str(&exposed.join(", ")).ok();
         }
@@ -100,15 +97,15 @@ fn prepend_vary(h: &mut HeaderMap, v: &'static str) {
 pub async fn layer(cors: Arc<Cors>, req: Request, next: Next) -> Response {
     let origin = req.headers().get("origin").cloned();
     let origin_str = origin.as_ref().and_then(|o| o.to_str().ok()).unwrap_or("").to_string();
-    if req.method() == Method::OPTIONS && req.headers().get("access-control-request-method").is_some_and(|v| !v.is_empty()) {
+    if req.method() == Method::OPTIONS
+        && req.headers().get("access-control-request-method").is_some_and(|v| !v.is_empty())
+    {
         let mut r = StatusCode::NO_CONTENT.into_response();
         let h = r.headers_mut();
         h.append("vary", HeaderValue::from_static(PREFLIGHT_VARY));
         let req_method = req.headers().get("access-control-request-method").cloned();
-        let method_ok = req_method
-            .as_ref()
-            .and_then(|m| m.to_str().ok())
-            .is_some_and(|m| m == "OPTIONS" || METHODS.contains(&m));
+        let method_ok =
+            req_method.as_ref().and_then(|m| m.to_str().ok()).is_some_and(|m| m == "OPTIONS" || METHODS.contains(&m));
         if origin_str.is_empty() || !cors.origin_allowed(&origin_str) || !method_ok {
             return r;
         }

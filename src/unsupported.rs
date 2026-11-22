@@ -93,9 +93,10 @@ fn old_browser(ua: &str) -> Option<(&'static str, i64)> {
         return Some((name, v));
     }
     let v = if name == "ie" {
-        ["msie ", "edge/", "edgios/", "edga/", "edg/"].iter().find_map(|m| find_major(&ua, m)).or_else(|| {
-            find_major(&ua, "trident/").map(|t| if (3..=7).contains(&t) { t + 4 } else { t })
-        })
+        ["msie ", "edge/", "edgios/", "edga/", "edg/"]
+            .iter()
+            .find_map(|m| find_major(&ua, m))
+            .or_else(|| find_major(&ua, "trident/").map(|t| if (3..=7).contains(&t) { t + 4 } else { t }))
     } else {
         None
     };
@@ -434,7 +435,8 @@ fn unsupported_browser(app: &App, headers: &HeaderMap, uri: &Uri) -> Response {
         })
     };
     if windows {
-        props["App"] = app_entry("windows", "https://docs.mattermost.com/install/desktop.html#windows-10-windows-8-1-windows-7");
+        props["App"] =
+            app_entry("windows", "https://docs.mattermost.com/install/desktop.html#windows-10-windows-8-1-windows-7");
     } else if mac_os_x {
         props["App"] = app_entry("mac", "https://docs.mattermost.com/install/desktop.html#mac-os-x-10-9");
     }
@@ -543,6 +545,9 @@ mod tests {
     fn template() {
         let src = r#"{{define "a"}}<a href='{{.L}}' title="{{.T}}">{{.T}}</a><img src='x/{{.S}}'>{{end}}{{define "p"}}[{{range .Props.Items}}{{template "a" .}}{{end}}]{{if .Props.No}}no{{end}}{{end}}"#;
         let data = json!({"Props": {"Items": [{"L": "javascript:x", "T": "a'b+c", "S": "a b"}]}});
-        assert_eq!(render(src, "p", &data), r#"[<a href='#ZgotmplZ' title="a&#39;b&#43;c">a&#39;b&#43;c</a><img src='x/a%20b'>]"#);
+        assert_eq!(
+            render(src, "p", &data),
+            r#"[<a href='#ZgotmplZ' title="a&#39;b&#43;c">a&#39;b&#43;c</a><img src='x/a%20b'>]"#
+        );
     }
 }

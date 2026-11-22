@@ -29,6 +29,10 @@ A chat server in Rust that replaces the Mattermost server (Go) for EBAC's intern
   (accounts `admin` / `Admin-pass-123`, `alice` / `Alice-pass-123`). Compare responses byte for byte.
 - `mm.ebac.app` is read-only for us: public endpoints only, no logins, no writes, and never connect to its database.
 
+## Code
+
+- `cargo fmt --all` before a commit; CI checks it.
+
 ## License
 
 - This project is AGPL-3.0-only (see `LICENSE`, `NOTICE`), because it is based on the Mattermost server's

@@ -52,10 +52,17 @@ impl Client {
             if got.is_empty() {
                 return out;
             }
-            assert!(got.len() as i64 <= per_page, "page {page} of {terms:?}: {} posts over per_page {per_page}", got.len());
+            assert!(
+                got.len() as i64 <= per_page,
+                "page {page} of {terms:?}: {} posts over per_page {per_page}",
+                got.len()
+            );
             if (got.len() as i64) < per_page {
                 // A short page is the last (EBAChat stops here): the next one must be empty.
-                assert!(self.search(team, terms, page + 1, per_page, deleted).await.is_empty(), "a page after a short one");
+                assert!(
+                    self.search(team, terms, page + 1, per_page, deleted).await.is_empty(),
+                    "a page after a short one"
+                );
                 out.extend(got);
                 return out;
             }
@@ -87,7 +94,9 @@ async fn search_pages_are_exact() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {
-        axum::serve(listener, api::router(app.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>()).await.unwrap();
+        axum::serve(listener, api::router(app.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>())
+            .await
+            .unwrap();
     });
 
     let http = reqwest::Client::new();
@@ -154,7 +163,9 @@ async fn search_pages_are_exact() {
     for i in 0..3 {
         say(private.clone(), format!("{w} private {i}"), None).await;
     }
-    let (s, _) = c.call(reqwest::Method::DELETE, &format!("/channels/{private}/members/{}", me["id"].as_str().unwrap()), None).await;
+    let (s, _) = c
+        .call(reqwest::Method::DELETE, &format!("/channels/{private}/members/{}", me["id"].as_str().unwrap()), None)
+        .await;
     assert_eq!(s, 200, "leave the private channel");
     let mut in_archived = vec![];
     for i in 0..3 {
@@ -206,8 +217,16 @@ async fn search_pages_are_exact() {
         assert_eq!(ids(&c.all_pages(&team, &w, per_page, false).await), words, "{w} per_page {per_page}");
     }
     for per_page in [5, 20] {
-        assert_eq!(ids(&c.all_pages(&team, &w, per_page, true).await), words_deleted, "with archived, per_page {per_page}");
-        assert_eq!(ids(&c.all_pages(&team, &format!("#{}", tag.to_lowercase()), per_page, false).await), tags_only, "hashtag");
+        assert_eq!(
+            ids(&c.all_pages(&team, &w, per_page, true).await),
+            words_deleted,
+            "with archived, per_page {per_page}"
+        );
+        assert_eq!(
+            ids(&c.all_pages(&team, &format!("#{}", tag.to_lowercase()), per_page, false).await),
+            tags_only,
+            "hashtag"
+        );
         assert_eq!(
             ids(&c.all_pages(&team, &format!("{w} #{tag}"), per_page, false).await),
             union,
@@ -225,7 +244,11 @@ async fn search_pages_are_exact() {
     // Reply counts as Go's: the thread's replies, on the root and on each reply.
     let all = c.all_pages(&team, &w, 60, false).await;
     for p in &all {
-        let thread = if p["root_id"].as_str().unwrap().is_empty() { p["id"].as_str().unwrap() } else { p["root_id"].as_str().unwrap() };
+        let thread = if p["root_id"].as_str().unwrap().is_empty() {
+            p["id"].as_str().unwrap()
+        } else {
+            p["root_id"].as_str().unwrap()
+        };
         let want = if thread == root { 2 } else { 0 };
         assert_eq!(p["reply_count"].as_i64().unwrap(), want, "reply_count of {}", p["id"]);
     }

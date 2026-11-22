@@ -711,7 +711,9 @@ impl App {
             ));
         }
         if c.is_board() {
-            return Err(bad("app.channel.create_channel.board_type.app_error", "").detail("use CreateBoardChannel instead"));
+            return Err(
+                bad("app.channel.create_channel.board_type.app_error", "").detail("use CreateBoardChannel instead")
+            );
         }
         if c.is_space() {
             return Err(bad("app.channel.create_channel.space_type.app_error", "").detail("use CreateChannel instead"));
@@ -903,15 +905,15 @@ impl App {
 
     // ---------- members ----------
 
-    /// `addUserToChannel`: the membership, history and caches.
-    async fn add_user_to_channel_row(&self, user: &User, channel: &Channel) -> ApiResult<ChannelMember> {
+    /// `addUserToChannel`: the membership, history and caches; true when added now.
+    async fn add_user_to_channel_row(&self, user: &User, channel: &Channel) -> ApiResult<(ChannelMember, bool)> {
         if channel.r#type != OPEN && channel.r#type != PRIVATE && !channel.is_space() {
             return Err(bad("api.channel.add_user_to_channel.type.app_error", "Cannot add user to this channel type."));
         }
         if let Some(m) = self.channel_member(&channel.id, &user.id).await? {
-            return Ok(m);
+            return Ok((m, false));
         }
-        let m = self
+        let saved = self
             .save_member(ChannelMember {
                 channel_id: channel.id.clone(),
                 user_id: user.id.clone(),
@@ -920,22 +922,31 @@ impl App {
                 scheme_user: !user.is_guest(),
                 ..Default::default()
             })
-            .await
-            .map_err(|e| AppError::internal("api.channel.add_user.to.channel.failed.app_error", e.detailed_error))?;
+            .await;
+        let m = match saved {
+            Ok(m) => m,
+            Err(e) if e.id == "app.channel.save_member.exists.app_error" => {
+                return Ok((self.channel_member_or_404(&channel.id, &user.id).await?, false));
+            }
+            Err(e) => {
+                return Err(AppError::internal("api.channel.add_user.to.channel.failed.app_error", e.detailed_error));
+            }
+        };
         self.log_join(&user.id, &channel.id).await?;
         self.invalidate_channel_cache_for_user(&user.id);
         self.invalidate_channel_members_cache(&channel.id);
         self.caches.members_notify_props.remove(&channel.id);
-        Ok(m)
+        Ok((m, true))
     }
 
-    /// `AddUserToChannel`: team membership checked, sidebar, `user_added` to the channel and to the user.
+    /// `AddUserToChannel`: team membership checked, sidebar, `user_added` to the channel and to the user; true when
+    /// added now.
     pub async fn add_user_to_channel(
         &self,
         user: &User,
         channel: &Channel,
         skip_team_check: bool,
-    ) -> ApiResult<ChannelMember> {
+    ) -> ApiResult<(ChannelMember, bool)> {
         if !skip_team_check {
             let tm =
                 perm::team_members(self, "tm.teamid = $1 AND tm.userid = $2", &[&channel.team_id, &user.id]).await?;
@@ -952,9 +963,9 @@ impl App {
                 ));
             }
         }
-        let m = self.add_user_to_channel_row(user, channel).await?;
+        let (m, added) = self.add_user_to_channel_row(user, channel).await?;
         if channel.is_space() {
-            return Ok(m);
+            return Ok((m, added));
         }
         let mut omit = BTreeMap::new();
         omit.insert(user.id.clone(), true);
@@ -969,7 +980,7 @@ impl App {
             data,
             Broadcast { channel_id: channel.id.clone(), user_id: user.id.clone(), ..Default::default() },
         );
-        Ok(m)
+        Ok((m, added))
     }
 
     /// `AddChannelMember`: an existing membership as it is; else added, with the "joined" (`actor_id` empty or the
@@ -996,8 +1007,8 @@ impl App {
         if !actor_id.is_empty() && actor.is_none() {
             return Err(crate::users::missing_account());
         }
-        let m = self.add_user_to_channel(&user, channel, false).await?;
-        if channel.is_space() {
+        let (m, added) = self.add_user_to_channel(&user, channel, false).await?;
+        if channel.is_space() || !added {
             return Ok(m);
         }
         if actor_id.is_empty() || actor_id == user_id {
@@ -1020,8 +1031,9 @@ impl App {
                 "You do not have the appropriate permissions.",
             ));
         }
-        self.add_user_to_channel(&user, channel, false).await?;
-        self.post_join_message(&user, channel).await;
+        if self.add_user_to_channel(&user, channel, false).await?.1 {
+            self.post_join_message(&user, channel).await;
+        }
         Ok(())
     }
 
@@ -1054,7 +1066,12 @@ impl App {
     }
 
     /// `removeUserFromChannel`: membership, thread memberships, history, caches and `user_removed`.
-    pub(crate) async fn remove_user_from_channel_row(&self, user: &User, remover_id: &str, channel: &Channel) -> ApiResult<()> {
+    pub(crate) async fn remove_user_from_channel_row(
+        &self,
+        user: &User,
+        remover_id: &str,
+        channel: &Channel,
+    ) -> ApiResult<()> {
         if channel.name == DEFAULT_CHANNEL && !user.is_guest() {
             return Err(bad(
                 "api.channel.remove.default.app_error",
@@ -1254,7 +1271,12 @@ impl App {
     // ---------- viewing ----------
 
     /// `MarkChannelsAsViewed` with `collapsed_threads_supported` (contract: posts call it for the poster).
-    pub async fn mark_viewed(&self, ids: &[String], user_id: &str, session_id: &str) -> ApiResult<BTreeMap<String, i64>> {
+    pub async fn mark_viewed(
+        &self,
+        ids: &[String],
+        user_id: &str,
+        session_id: &str,
+    ) -> ApiResult<BTreeMap<String, i64>> {
         let crt = self.is_crt_enabled(user_id).await;
         self.mark_channels_viewed(ids, user_id, session_id, true, crt).await
     }

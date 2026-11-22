@@ -134,8 +134,14 @@ impl App {
                 bad("app.role.get_by_name.app_error", "Unable to get role.").detail(format!("name={name}"))
             })?;
             if !role.scheme_managed {
-                if channel && is_builtin(name) && ![perm::CHANNEL_GUEST, perm::CHANNEL_USER, perm::CHANNEL_ADMIN].contains(&name) {
-                    return Err(bad(scope_err, "The provided role is managed by a Scheme and therefore cannot be applied directly to a Channel Member."));
+                if channel
+                    && is_builtin(name)
+                    && ![perm::CHANNEL_GUEST, perm::CHANNEL_USER, perm::CHANNEL_ADMIN].contains(&name)
+                {
+                    return Err(bad(
+                        scope_err,
+                        "The provided role is managed by a Scheme and therefore cannot be applied directly to a Channel Member.",
+                    ));
                 }
                 explicit.push(name);
             } else if name == scheme[2] {
@@ -145,7 +151,10 @@ impl App {
             } else if name == scheme[0] {
                 flags[0] = true;
             } else {
-                return Err(bad(scope_err, "The provided role is managed by a Scheme and therefore cannot be applied directly to a Channel Member."));
+                return Err(bad(
+                    scope_err,
+                    "The provided role is managed by a Scheme and therefore cannot be applied directly to a Channel Member.",
+                ));
             }
         }
         if flags[1] && flags[0] {
@@ -200,7 +209,10 @@ async fn update_channel_member_roles(
     }
     app.require_channel(&s, &channel_id, perm::MANAGE_CHANNEL_ROLES).await?;
     let mut m = app.channel_member(&channel_id, &user_id).await?.ok_or_else(|| {
-        AppError::not_found("app.channel.get_member.missing.app_error", "No channel member found for that user ID and channel ID.")
+        AppError::not_found(
+            "app.channel.get_member.missing.app_error",
+            "No channel member found for that user ID and channel ID.",
+        )
     })?;
     let scheme = app.scheme_roles_for_channel(&channel_id).await?;
     let (f, explicit) = app.split_roles(&roles, &scheme, true, m.scheme_guest).await?;
@@ -229,10 +241,12 @@ async fn update_team_member_roles(
         return Err(AppError::invalid_param("roles"));
     }
     app.require_team(&s, &team_id, "manage_team_roles").await?;
-    let m: TeamMember = app
-        .team_member(&team_id, &user_id)
-        .await?
-        .ok_or_else(|| AppError::not_found("app.team.get_member.missing.app_error", "No team member found for that user ID and team ID."))?;
+    let m: TeamMember = app.team_member(&team_id, &user_id).await?.ok_or_else(|| {
+        AppError::not_found(
+            "app.team.get_member.missing.app_error",
+            "No team member found for that user ID and team ID.",
+        )
+    })?;
     let scheme = app.scheme_roles_for_team(&team_id).await?;
     let (f, explicit) = app.split_roles(&roles, &scheme, false, m.scheme_guest).await?;
     sqlx::query(

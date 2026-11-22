@@ -23,7 +23,12 @@ fn migrations() {
         let path = root.join(dir);
         println!("cargo:rerun-if-changed={}", path.display());
         let mut files: Vec<_> = std::fs::read_dir(&path)
-            .map(|d| d.filter_map(|e| e.ok()).map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "sql")).collect())
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "sql"))
+                    .collect()
+            })
             .unwrap_or_default();
         files.sort();
         out += &format!("pub static {konst}: &[(&str, &str)] = &[\n");

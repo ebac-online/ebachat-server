@@ -52,7 +52,8 @@ pub(super) fn option_parent_links(f: &Field) -> Result<(Vec<Edge>, Vec<String>),
         let Value::Object(m) = o else { return Err(format!("the option at index {i} is not an object")) };
         options.push(m);
     }
-    let str_of = |m: &serde_json::Map<String, Value>, k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+    let str_of =
+        |m: &serde_json::Map<String, Value>, k: &str| m.get(k).and_then(Value::as_str).unwrap_or("").to_string();
     let mut ids_by_name: HashMap<String, String> = HashMap::new();
     let mut ambiguous = HashSet::new();
     for o in &options {
@@ -70,7 +71,10 @@ pub(super) fn option_parent_links(f: &Field) -> Result<(Vec<Edge>, Vec<String>),
     for (i, o) in options.iter().enumerate() {
         let Some(raw) = o.get("parents").filter(|v| !v.is_null()) else { continue };
         if f.kind != "graph" {
-            return Err(format!("the option at index {i} carries parents, and the options of a {} field form no hierarchy", f.kind));
+            return Err(format!(
+                "the option at index {i} carries parents, and the options of a {} field form no hierarchy",
+                f.kind
+            ));
         }
         let parents: Option<Vec<&str>> = raw.as_array().and_then(|a| a.iter().map(Value::as_str).collect());
         let Some(parents) = parents else {
@@ -95,9 +99,13 @@ pub(super) fn option_parent_links(f: &Field) -> Result<(Vec<Edge>, Vec<String>),
             } else if seen.contains(p) {
                 return Err(format!("the option at index {i} names {p:?} as a parent more than once"));
             } else if ambiguous.contains(p) {
-                return Err(format!("the option at index {i} is put under {p:?}, and two of the field's options are called that"));
+                return Err(format!(
+                    "the option at index {i} is put under {p:?}, and two of the field's options are called that"
+                ));
             } else if pid.is_empty() {
-                return Err(format!("the option at index {i} is put under {p:?}, which the field has no option called"));
+                return Err(format!(
+                    "the option at index {i} is put under {p:?}, which the field has no option called"
+                ));
             } else if pid == id {
                 return Err(format!("the option at index {i}, {:?}, is put under itself", str_of(o, "name")));
             }
@@ -159,7 +167,11 @@ fn reachable(from: &str, adj: &HashMap<String, Vec<String>>) -> HashSet<String> 
 
 /// `longestChain`: how many options lie on the longest chain from `from` along `adj`; a cycle is an error. Walked
 /// without recursion, since an option list may arrive as one chain of thousands.
-fn longest_chain(from: &str, adj: &HashMap<String, Vec<String>>, memo: &mut HashMap<String, usize>) -> Result<usize, String> {
+fn longest_chain(
+    from: &str,
+    adj: &HashMap<String, Vec<String>>,
+    memo: &mut HashMap<String, usize>,
+) -> Result<usize, String> {
     const WALKING: usize = 0;
     match memo.get(from) {
         Some(&WALKING) => return Err(format!("option {from} sits above itself")),
@@ -211,11 +223,18 @@ impl App {
 
     /// `walkOptionHierarchy`: each live option asked about with every option at or above it (`up`) or at or below
     /// it, refused past `PropertyGraphMaxWalkRows` rows rather than answered in part.
-    async fn walk_options(&self, f: &Field, ids: &[String], up: bool, fail: &str) -> ApiResult<HashMap<String, Vec<String>>> {
+    async fn walk_options(
+        &self,
+        f: &Field,
+        ids: &[String],
+        up: bool,
+        fail: &str,
+    ) -> ApiResult<HashMap<String, Vec<String>>> {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let (step_to, standing_on) = if up { ("ParentOptionID", "ChildOptionID") } else { ("ChildOptionID", "ParentOptionID") };
+        let (step_to, standing_on) =
+            if up { ("ParentOptionID", "ChildOptionID") } else { ("ChildOptionID", "ParentOptionID") };
         let rows: Vec<(String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "WITH RECURSIVE hierarchy (SeedID, OptionID) AS (
                SELECT opt.ID, opt.ID FROM PropertyOptions opt WHERE opt.FieldID = $1 AND opt.ID = ANY($2) AND opt.DeleteAt = 0
@@ -281,9 +300,18 @@ impl App {
     /// `ValidateOptionEdges` as `optionsChangeFromValidation` answers it: a change to a graph field's hierarchy
     /// checked as a whole, a rejection as `app.property_field.options.invalid.app_error` with its reason, a hierarchy
     /// that could not be read as a server error under `fail`.
-    pub(super) async fn validate_option_edges(&self, f: &Field, add: &[Edge], remove: &[Edge], fail: &str) -> ApiResult<()> {
+    pub(super) async fn validate_option_edges(
+        &self,
+        f: &Field,
+        add: &[Edge],
+        remove: &[Edge],
+        fail: &str,
+    ) -> ApiResult<()> {
         if f.kind != "graph" {
-            return Err(options_refused(&format!("property field {} is of type {}, whose options form no hierarchy", f.id, f.kind)));
+            return Err(options_refused(&format!(
+                "property field {} is of type {}, whose options form no hierarchy",
+                f.id, f.kind
+            )));
         }
         if add.is_empty() {
             return Ok(());
@@ -300,8 +328,10 @@ impl App {
                 )));
             }
         }
-        let total: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM PropertyOptionEdges WHERE FieldID = $1").bind(&f.id).fetch_one(&self.db).await?;
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM PropertyOptionEdges WHERE FieldID = $1")
+            .bind(&f.id)
+            .fetch_one(&self.db)
+            .await?;
         if total + delta > MAX_EDGES {
             return Err(options_refused(&format!(
                 "invalid options: the field would hold {} parent links between its options, and no field may hold more than {MAX_EDGES}",
@@ -322,7 +352,12 @@ impl App {
         let mut deepest = 0;
         for e in add {
             let measure = |r: Result<usize, String>| {
-                r.map_err(|m| AppError::internal(fail, format!("failed to measure a graph property field's option hierarchy: {m}")))
+                r.map_err(|m| {
+                    AppError::internal(
+                        fail,
+                        format!("failed to measure a graph property field's option hierarchy: {m}"),
+                    )
+                })
             };
             let above = measure(longest_chain(&e.parent, &n.parents, &mut up))?;
             let below = measure(longest_chain(&e.child, &n.children, &mut down))?;
@@ -337,7 +372,12 @@ impl App {
     }
 
     /// `parentsToDetachFor`: the stored links of these options that `add` does not restate.
-    pub(super) async fn parents_to_detach(&self, field_id: &str, replacing: &[String], add: &[Edge]) -> ApiResult<Vec<Edge>> {
+    pub(super) async fn parents_to_detach(
+        &self,
+        field_id: &str,
+        replacing: &[String],
+        add: &[Edge],
+    ) -> ApiResult<Vec<Edge>> {
         if replacing.is_empty() {
             return Ok(vec![]);
         }
@@ -347,7 +387,12 @@ impl App {
 
     /// `validateOptionBlobLinks`: the hierarchy a field's inline option list asks for, checked against the field as
     /// stored (`None` for a field being created). Every inline option gets an id first.
-    pub(super) async fn validate_option_blob_links(&self, f: &mut Field, stored: Option<&Field>, fail: &str) -> ApiResult<()> {
+    pub(super) async fn validate_option_blob_links(
+        &self,
+        f: &mut Field,
+        stored: Option<&Field>,
+        fail: &str,
+    ) -> ApiResult<()> {
         super::ensure_option_ids(f, fail)?;
         let (add, replacing) = option_parent_links(f).map_err(|e| options_refused(&e))?;
         if add.is_empty() && replacing.is_empty() {
@@ -392,7 +437,10 @@ impl App {
                     None => {
                         return Err(option_error(
                             i,
-                            &format!("puts option {:?} under {name:?}, which field {} has no option called", o.name, f.id),
+                            &format!(
+                                "puts option {:?} under {name:?}, which field {} has no option called",
+                                o.name, f.id
+                            ),
                         ));
                     }
                     Some((_, true)) => {
@@ -419,10 +467,11 @@ impl App {
 
 /// `requireLiveGraphField`: links are only written on a live graph field.
 pub(super) async fn require_live_graph_field(tx: &mut Tx<'_>, field_id: &str) -> ApiResult<()> {
-    let kind: Option<String> = sqlx::query_scalar("SELECT Type::text FROM PropertyFields WHERE ID = $1 AND DeleteAt = 0")
-        .bind(field_id)
-        .fetch_optional(&mut **tx)
-        .await?;
+    let kind: Option<String> =
+        sqlx::query_scalar("SELECT Type::text FROM PropertyFields WHERE ID = $1 AND DeleteAt = 0")
+            .bind(field_id)
+            .fetch_optional(&mut **tx)
+            .await?;
     match kind {
         None => Err(super::property_not_found()),
         Some(k) if k != "graph" => Err(invalid_input(
@@ -450,22 +499,35 @@ async fn require_owned_options(tx: &mut Tx<'_>, field_id: &str, edges: &[Edge]) 
             .into_iter()
             .collect();
     match ids.iter().find(|id| !live.contains(*id)) {
-        Some(id) => Err(invalid_input("PropertyOptionEdge", "option_id", id, &format!("field {field_id} has no live option {id} of its own"))),
+        Some(id) => Err(invalid_input(
+            "PropertyOptionEdge",
+            "option_id",
+            id,
+            &format!("field {field_id} has no live option {id} of its own"),
+        )),
         None => Ok(()),
     }
 }
 
 /// The link writes of `MutateOptions`, after its options: removals first, then additions (an existing link is kept
 /// with its `CreateAt`).
-pub(super) async fn write_edges(tx: &mut Tx<'_>, field_id: &str, add: &[Edge], remove: &[Edge], now: i64) -> ApiResult<()> {
+pub(super) async fn write_edges(
+    tx: &mut Tx<'_>,
+    field_id: &str,
+    add: &[Edge],
+    remove: &[Edge],
+    now: i64,
+) -> ApiResult<()> {
     require_owned_options(tx, field_id, add).await?;
     for e in remove {
-        sqlx::query("DELETE FROM PropertyOptionEdges WHERE FieldID = $1 AND ChildOptionID = $2 AND ParentOptionID = $3")
-            .bind(field_id)
-            .bind(&e.child)
-            .bind(&e.parent)
-            .execute(&mut **tx)
-            .await?;
+        sqlx::query(
+            "DELETE FROM PropertyOptionEdges WHERE FieldID = $1 AND ChildOptionID = $2 AND ParentOptionID = $3",
+        )
+        .bind(field_id)
+        .bind(&e.child)
+        .bind(&e.parent)
+        .execute(&mut **tx)
+        .await?;
     }
     for e in add {
         sqlx::query(
@@ -571,7 +633,8 @@ mod tests {
     #[test]
     fn edge_change_counts_what_moves() {
         let e = |c: &str, p: &str| Edge { child: c.into(), parent: p.into() };
-        let (after, delta) = edge_change(&[e("x", "a"), e("x", "b")], &[e("x", "c"), e("x", "a")], &[e("x", "a"), e("x", "b")]);
+        let (after, delta) =
+            edge_change(&[e("x", "a"), e("x", "b")], &[e("x", "c"), e("x", "a")], &[e("x", "a"), e("x", "b")]);
         assert_eq!(after["x"].len(), 2);
         assert_eq!(delta, 0);
     }

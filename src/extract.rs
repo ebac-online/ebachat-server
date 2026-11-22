@@ -23,7 +23,9 @@ const MAX_PLAIN: usize = 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES: usize = 1000;
 
 /// `ignoredFiles` of the job.
-const IGNORED: &[&str] = &["png", "jpg", "jpeg", "gif", "wmv", "mpg", "mpeg", "mp3", "mp4", "ogg", "ogv", "mov", "apk", "svg", "webm", "mkv"];
+const IGNORED: &[&str] = &[
+    "png", "jpg", "jpeg", "gif", "wmv", "mpg", "mpeg", "mp3", "mp4", "ogg", "ogv", "mov", "apk", "svg", "webm", "mkv",
+];
 
 fn ext(name: &str) -> String {
     name.rsplit_once('.').map(|(_, e)| e.to_string()).unwrap_or_default()
@@ -57,7 +59,8 @@ pub fn extract(name: &str, data: &[u8], max_file_size: i64) -> String {
 fn document(e: &str, d: &[u8]) -> Result<String, String> {
     match e {
         "docx" => {
-            let mut z = zip::ZipArchive::new(std::io::Cursor::new(d)).map_err(|e| format!("error unzipping data: {e}"))?;
+            let mut z =
+                zip::ZipArchive::new(std::io::Cursor::new(d)).map_err(|e| format!("error unzipping data: {e}"))?;
             let (mut header, mut body, mut footer) = (String::new(), String::new(), String::new());
             for (ct, part) in overrides(&mut z)? {
                 let target = match ct.as_str() {
@@ -87,7 +90,8 @@ fn document(e: &str, d: &[u8]) -> Result<String, String> {
             Ok(body.strip_suffix('\n').unwrap_or(&body).to_string())
         }
         "odt" => {
-            let mut z = zip::ZipArchive::new(std::io::Cursor::new(d)).map_err(|e| format!("error unzipping data: {e}"))?;
+            let mut z =
+                zip::ZipArchive::new(std::io::Cursor::new(d)).map_err(|e| format!("error unzipping data: {e}"))?;
             match zip_file(&mut z, "content.xml") {
                 Ok(x) => xml_to_text(&x, &["br", "p", "tab"], &[]),
                 Err(_) => Ok(String::new()),
@@ -133,7 +137,11 @@ fn convert_html(d: &[u8]) -> Result<String, String> {
     if !matches!(out.status.code(), Some(0 | 1)) {
         return Err("MAIN: P is nil".into());
     }
-    if justext_has_paragraph(&String::from_utf8_lossy(&out.stdout)) { Ok(String::new()) } else { Err("MAIN: P is nil".into()) }
+    if justext_has_paragraph(&String::from_utf8_lossy(&out.stdout)) {
+        Ok(String::new())
+    } else {
+        Err("MAIN: P is nil".into())
+    }
 }
 
 /// Whether justext's `ReadAll` finds a paragraph: the document parsed, `head`, `script` and `style` removed, only
@@ -143,9 +151,37 @@ fn justext_has_paragraph(html: &str) -> bool {
     use html5ever::tendril::TendrilSink;
     use markup5ever_rcdom::{Handle, NodeData, RcDom};
     const PARAGRAPH: &[&str] = &[
-        "blockquote", "caption", "center", "col", "colgroup", "dd", "div", "dl", "dt", "fieldset", "form", "legend",
-        "optgroup", "option", "p", "pre", "table", "td", "textarea", "tfoot", "th", "thead", "tr", "ul", "li", "h1", "h2",
-        "h3", "h4", "h5", "h6",
+        "blockquote",
+        "caption",
+        "center",
+        "col",
+        "colgroup",
+        "dd",
+        "div",
+        "dl",
+        "dt",
+        "fieldset",
+        "form",
+        "legend",
+        "optgroup",
+        "option",
+        "p",
+        "pre",
+        "table",
+        "td",
+        "textarea",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "ul",
+        "li",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
     ];
     const SELF_CLOSING: &[&str] = &["area", "base", "basefont", "br", "hr", "input", "img", "link", "meta"];
     #[derive(Default)]
@@ -252,7 +288,9 @@ fn overrides(z: &mut zip::ZipArchive<std::io::Cursor<&[u8]>>) -> Result<Vec<(Str
     let mut buf = vec![];
     loop {
         match r.read_event_into(&mut buf).map_err(|e| e.to_string())? {
-            quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e) if e.local_name().as_ref() == b"Override" => {
+            quick_xml::events::Event::Empty(e) | quick_xml::events::Event::Start(e)
+                if e.local_name().as_ref() == b"Override" =>
+            {
                 let (mut ct, mut part) = (String::new(), String::new());
                 for a in e.attributes().flatten() {
                     let v = a.unescape_value().map(|v| v.to_string()).unwrap_or_default();
@@ -323,7 +361,11 @@ fn xml_to_text(x: &[u8], breaks: &[&str], skip: &[&str]) -> Result<String, Strin
                     _ => "",
                 };
                 if let Some(n) = name.strip_prefix('#') {
-                    let c = if let Some(h) = n.strip_prefix('x') { u32::from_str_radix(h, 16).ok() } else { n.parse().ok() };
+                    let c = if let Some(h) = n.strip_prefix('x') {
+                        u32::from_str_radix(h, 16).ok()
+                    } else {
+                        n.parse().ok()
+                    };
                     if let Some(c) = c.and_then(char::from_u32) {
                         out.push(c);
                     }
@@ -357,9 +399,12 @@ fn pdftotext(d: &[u8]) -> Result<String, String> {
 /// `archives.Identify` by name: the formats Go's extractor can open.
 fn is_archive(name: &str) -> bool {
     let n = name.to_lowercase();
-    [".zip", ".tar", ".tar.gz", ".tgz", ".gz", ".bz2", ".tbz2", ".xz", ".txz", ".zst", ".7z", ".rar", ".lz4", ".br", ".sz", ".lz"]
-        .iter()
-        .any(|e| n.ends_with(e))
+    [
+        ".zip", ".tar", ".tar.gz", ".tgz", ".gz", ".bz2", ".tbz2", ".xz", ".txz", ".zst", ".7z", ".rar", ".lz4", ".br",
+        ".sz", ".lz",
+    ]
+    .iter()
+    .any(|e| n.ends_with(e))
 }
 
 /// The archive extractor without recursion: each entry's path and a space. 7-zip archives give nothing.
@@ -370,7 +415,9 @@ fn archive(name: &str, d: &[u8]) -> Result<String, String> {
     }
     if n.ends_with(".zip") {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(d)).map_err(|e| e.to_string())?;
-        let names: Vec<String> = (0..z.len()).filter_map(|i| z.by_index(i).ok().filter(|f| !f.is_dir()).map(|f| f.name().to_string())).collect();
+        let names: Vec<String> = (0..z.len())
+            .filter_map(|i| z.by_index(i).ok().filter(|f| !f.is_dir()).map(|f| f.name().to_string()))
+            .collect();
         return Ok(entry_list(names));
     }
     let tar_bytes: Vec<u8> = if n.ends_with(".tar.gz") || n.ends_with(".tgz") {
@@ -465,17 +512,26 @@ fn is_graphic_or_space(c: char) -> bool {
     if c.is_whitespace() {
         return true;
     }
-    !(c.is_control() || matches!(c as u32, 0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE000..=0xF8FF | 0xD800..=0xDFFF))
+    !(c.is_control()
+        || matches!(c as u32, 0xAD | 0x600..=0x605 | 0x61C | 0x6DD | 0x70F | 0x200B..=0x200F | 0x202A..=0x202E | 0x2060..=0x2064 | 0x2066..=0x206F | 0xFEFF | 0xFFF9..=0xFFFB | 0xE000..=0xF8FF | 0xD800..=0xDFFF))
 }
 
 impl App {
     /// `ExtractContentFromFileInfo`: images are skipped; text found is saved (1 MB at most) and the post's file
     /// infos dropped from the cache. An error is a file that could not be read or saved.
-    pub async fn extract_content_from_file_info(&self, id: &str, name: &str, path: &str, mime: &str, post_id: &str) -> Result<(), String> {
+    pub async fn extract_content_from_file_info(
+        &self,
+        id: &str,
+        name: &str,
+        path: &str,
+        mime: &str,
+        post_id: &str,
+    ) -> Result<(), String> {
         if mime.starts_with("image") {
             return Ok(());
         }
-        let data = self.files.read(path).await.map_err(|e| format!("failed to open file for extract file content: {e}"))?;
+        let data =
+            self.files.read(path).await.map_err(|e| format!("failed to open file for extract file content: {e}"))?;
         let max = self.cfg.i64("FileSettings.MaxFileSize");
         let name = name.to_string();
         let mut text = tokio::task::spawn_blocking(move || extract(&name, &data, max)).await.unwrap_or_default();
@@ -513,7 +569,9 @@ pub async fn extract_content_job(app: &State, job: &mut Job) -> Result<(), Strin
         let p = |k: &str, d: i64| -> Result<i64, String> {
             match job.get(k) {
                 None => Ok(d),
-                Some(s) => s.parse::<i64>().map(|v| v * 1000).map_err(|e| format!("strconv.ParseInt: parsing \"{s}\": {e}")),
+                Some(s) => {
+                    s.parse::<i64>().map(|v| v * 1000).map_err(|e| format!("strconv.ParseInt: parsing \"{s}\": {e}"))
+                }
             }
         };
         (p("from", 0)?, p("to", now_ms() / 1000)?)
@@ -526,7 +584,11 @@ pub async fn extract_content_job(app: &State, job: &mut Job) -> Result<(), Strin
             if from > 0 { "CreateAt >= $1 AND " } else { "$1 = $1 AND " },
             if catchup { " AND (Content IS NULL OR Content = '')" } else { "" }
         );
-        let infos: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(from).fetch_all(&app.db).await.map_err(|e| format!("failed to find FileInfos: {e}"))?;
+        let infos: Vec<Row> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(from)
+            .fetch_all(&app.db)
+            .await
+            .map_err(|e| format!("failed to find FileInfos: {e}"))?;
         let Some(last) = infos.last().map(|r| r.6) else { break };
         let n = infos.len();
         for (id, name, path, mime, ext, post_id, _) in infos {
@@ -571,7 +633,9 @@ mod tests {
     /// Tidy's output for files Go's docconv (with justext) gives empty text (a paragraph) or an error (none).
     #[test]
     fn justext_paragraphs() {
-        let doc = |body: &str| format!("<!DOCTYPE html>\n<html>\n<head>\n<title>t</title>\n</head>\n<body>\n{body}\n</body>\n</html>\n");
+        let doc = |body: &str| {
+            format!("<!DOCTYPE html>\n<html>\n<head>\n<title>t</title>\n</head>\n<body>\n{body}\n</body>\n</html>\n")
+        };
         assert!(justext_has_paragraph(&doc("<p>fragment</p>")));
         assert!(justext_has_paragraph(&doc("<div>x</div>")));
         assert!(justext_has_paragraph(&doc("text<br>\n<br>\nmore")));

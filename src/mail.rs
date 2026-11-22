@@ -181,7 +181,8 @@ fn tls_config(skip: bool) -> Result<Arc<tokio_rustls::rustls::ClientConfig>, Str
 
 async fn tls_wrap(tcp: Box<dyn Stream>, cfg: &SmtpConfig) -> Result<Box<dyn Stream>, String> {
     let connector = tokio_rustls::TlsConnector::from(tls_config(cfg.skip_cert_verification)?);
-    let name = tokio_rustls::rustls::pki_types::ServerName::try_from(cfg.server_name.clone()).map_err(|e| e.to_string())?;
+    let name =
+        tokio_rustls::rustls::pki_types::ServerName::try_from(cfg.server_name.clone()).map_err(|e| e.to_string())?;
     let s = connector.connect(name, tcp).await.map_err(|e| e.to_string())?;
     Ok(Box::new(s))
 }
@@ -198,7 +199,9 @@ async fn connect(cfg: &SmtpConfig) -> Result<(Conn, Vec<String>), String> {
     let mut stream: Box<dyn Stream> = Box::new(tcp);
     let tls = cfg.connection_security == "TLS";
     if tls {
-        stream = tls_wrap(stream, cfg).await.map_err(|e| format!("unable to connect to the SMTP server through TLS: {e}"))?;
+        stream = tls_wrap(stream, cfg)
+            .await
+            .map_err(|e| format!("unable to connect to the SMTP server through TLS: {e}"))?;
     }
     let mut c = Conn { io: BufReader::new(stream), tls };
     let (code, msg) = c.reply().await.map_err(|e| format!("unable to connect to the SMTP server: {e}"))?;
@@ -279,7 +282,9 @@ pub async fn send(m: &Mail, cfg: &SmtpConfig) -> Result<(), String> {
         return Ok(());
     }
     let timeout = Duration::from_secs(cfg.timeout_secs.max(1));
-    let (mut c, ext) = tokio::time::timeout(timeout, connect(cfg)).await.map_err(|_| "unable to connect to the SMTP server: context deadline exceeded".to_string())??;
+    let (mut c, ext) = tokio::time::timeout(timeout, connect(cfg))
+        .await
+        .map_err(|_| "unable to connect to the SMTP server: context deadline exceeded".to_string())??;
     eprintln!("sending mail to={}", m.to);
     let to = single_address(&m.to).map_err(|e| format!("invalid To header: {e}"))?;
     if !m.cc.is_empty() {
@@ -746,7 +751,8 @@ fn decode_rfc2047_word(s: &str) -> Result<(String, bool), String> {
                     b'_' => out.push(b' '),
                     b'=' => {
                         let hex = b.get(i + 1..i + 3).filter(|h| h.iter().all(u8::is_ascii_hexdigit));
-                        let Some(v) = hex.and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok()) else {
+                        let Some(v) = hex.and_then(|h| u8::from_str_radix(std::str::from_utf8(h).ok()?, 16).ok())
+                        else {
                             return plain();
                         };
                         out.push(v);
@@ -994,7 +1000,15 @@ struct Textify {
 
 impl Textify {
     fn new() -> Textify {
-        Textify { buf: String::new(), prefix: String::new(), ends_with_space: false, just_closed_div: false, blockquote: 0, line_len: 0, pre: false }
+        Textify {
+            buf: String::new(),
+            prefix: String::new(),
+            ends_with_space: false,
+            just_closed_div: false,
+            blockquote: 0,
+            line_len: 0,
+            pre: false,
+        }
     }
 
     fn emit(&mut self, data: &str) {
@@ -1093,7 +1107,9 @@ impl Textify {
             }
             NodeData::Element { name, attrs, .. } => {
                 let tag = name.local.to_string();
-                let attr = |k: &str| attrs.borrow().iter().find(|a| &*a.name.local == k).map(|a| a.value.to_string()).unwrap_or_default();
+                let attr = |k: &str| {
+                    attrs.borrow().iter().find(|a| &*a.name.local == k).map(|a| a.value.to_string()).unwrap_or_default()
+                };
                 self.element(n, &tag, &attr);
             }
             NodeData::Document => self.children(n),
@@ -1163,9 +1179,14 @@ impl Textify {
                 }
                 let img_alt = match kids.as_slice() {
                     [only] => match &only.data {
-                        NodeData::Element { name, attrs, .. } if &*name.local == "img" => {
-                            Some(attrs.borrow().iter().find(|a| &*a.name.local == "alt").map(|a| a.value.to_string()).unwrap_or_default())
-                        }
+                        NodeData::Element { name, attrs, .. } if &*name.local == "img" => Some(
+                            attrs
+                                .borrow()
+                                .iter()
+                                .find(|a| &*a.name.local == "alt")
+                                .map(|a| a.value.to_string())
+                                .unwrap_or_default(),
+                        ),
                         _ => None,
                     },
                     _ => None,
@@ -1234,7 +1255,9 @@ mod tests {
 
     #[test]
     fn text_of_html() {
-        let t = html_to_text("<html><head><style>x{}</style></head><body><h2>Hi there</h2><p>See <a href='http://a'>this</a> and <b>bold</b><br>next</p></body></html>");
+        let t = html_to_text(
+            "<html><head><style>x{}</style></head><body><h2>Hi there</h2><p>See <a href='http://a'>this</a> and <b>bold</b><br>next</p></body></html>",
+        );
         assert_eq!(t, "--------\nHi there\n--------\n\nSee this ( http://a ) and *bold*\nnext");
     }
 
@@ -1284,7 +1307,10 @@ mod tests {
             assert_eq!(got, want.map_err(str::to_string), "{input:?}");
         }
         assert_eq!(single_address("a@b.com, c@d.com"), Err("must contain exactly one address, got 2".into()));
-        assert_eq!(single_address("x@y.z\r\nRCPT TO:<y@z>").unwrap_err(), "failed to parse address: mail: expected comma");
+        assert_eq!(
+            single_address("x@y.z\r\nRCPT TO:<y@z>").unwrap_err(),
+            "failed to parse address: mail: expected comma"
+        );
         assert_eq!(single_address("Bob <bob@x.com>"), Ok("bob@x.com".into()));
     }
 
@@ -1352,7 +1378,12 @@ mod tests {
         let (port, h) = fake_smtp(vec!["250 OK\r\n", "250 OK\r\n", "250 OK\r\n", "250 OK\r\n"]).await;
         let mut cfg = smtp_cfg(port, "");
         cfg.auth = false;
-        let m = Mail { to: "a@b.com (x\r\nRCPT TO:<evil@x.com>)".into(), subject: "s".into(), html: "h".into(), ..Default::default() };
+        let m = Mail {
+            to: "a@b.com (x\r\nRCPT TO:<evil@x.com>)".into(),
+            subject: "s".into(),
+            html: "h".into(),
+            ..Default::default()
+        };
         let err = send(&m, &cfg).await.unwrap_err();
         assert_eq!(err, "failed to set the to address: smtp: A line must not contain CR or LF");
         let got = h.await.unwrap();
@@ -1360,12 +1391,18 @@ mod tests {
         let m = Mail { to: "a@b.com\r\nRCPT TO:<evil@x.com>".into(), ..Default::default() };
         let (port, _h) = fake_smtp(vec!["250 OK\r\n", "250 OK\r\n"]).await;
         cfg.port = port.to_string();
-        assert_eq!(send(&m, &cfg).await.unwrap_err(), "invalid To header: failed to parse address: mail: expected comma");
+        assert_eq!(
+            send(&m, &cfg).await.unwrap_err(),
+            "invalid To header: failed to parse address: mail: expected comma"
+        );
         cfg.feedback_email = "x@y.com>\r\nRCPT TO:<evil@x.com".into();
         let (port, h) = fake_smtp(vec!["250 OK\r\n", "250 OK\r\n"]).await;
         cfg.port = port.to_string();
         let m = Mail { to: "a@b.com".into(), ..Default::default() };
-        assert_eq!(send(&m, &cfg).await.unwrap_err(), "failed to set the from address: smtp: A line must not contain CR or LF");
+        assert_eq!(
+            send(&m, &cfg).await.unwrap_err(),
+            "failed to set the from address: smtp: A line must not contain CR or LF"
+        );
         assert!(h.await.unwrap().iter().all(|l| !l.contains("evil")));
     }
 

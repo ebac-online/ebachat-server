@@ -8,9 +8,9 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::app::Query;
 use axum::body::Bytes;
 use axum::extract::{Path, State as St};
-use crate::app::Query;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, put};
@@ -22,8 +22,8 @@ use crate::app::{ApiResult, App, AppError, Auth, State, is_valid_id, now_ms};
 use crate::channels_api::paging;
 use crate::db::{self, Table};
 use crate::hub::Broadcast;
-use crate::model::{Channel, Role, Scheme, Team};
 use crate::model::Spaced;
+use crate::model::{Channel, Role, Scheme, Team};
 use crate::team_admin::decode;
 
 pub fn routes() -> Router<State> {
@@ -43,15 +43,33 @@ pub fn routes() -> Router<State> {
 pub(crate) const ALL_PERMISSIONS: &str = include_str!("../data/all_permissions.txt");
 
 /// `NewSystemRoleIDs`.
-const NEW_SYSTEM_ROLES: [&str; 4] = ["system_user_manager", "system_read_only_admin", "system_manager", "shared_channel_manager"];
+const NEW_SYSTEM_ROLES: [&str; 4] =
+    ["system_user_manager", "system_read_only_admin", "system_manager", "shared_channel_manager"];
 
 /// `BuiltInSchemeManagedRoleIDs` without the channel roles, and `NewSystemRoleIDs`: a change to these touches no
 /// channel scheme's role.
 const NOT_CHANNEL_HIGHER_SCOPE: [&str; 21] = [
-    "system_guest", "system_user", "system_admin", "system_post_all", "system_post_all_public",
-    "system_user_access_token", "team_guest", "team_user", "team_admin", "team_post_all", "team_post_all_public",
-    "custom_group_user", "system_custom_group_admin", "playbook_admin", "playbook_member", "run_admin", "run_member",
-    "system_user_manager", "system_read_only_admin", "system_manager", "shared_channel_manager",
+    "system_guest",
+    "system_user",
+    "system_admin",
+    "system_post_all",
+    "system_post_all_public",
+    "system_user_access_token",
+    "team_guest",
+    "team_user",
+    "team_admin",
+    "team_post_all",
+    "team_post_all_public",
+    "custom_group_user",
+    "system_custom_group_admin",
+    "playbook_admin",
+    "playbook_member",
+    "run_admin",
+    "run_member",
+    "system_user_manager",
+    "system_read_only_admin",
+    "system_manager",
+    "shared_channel_manager",
 ];
 
 /// Permissions no patch may add or remove.
@@ -211,11 +229,12 @@ impl App {
         let err = |e: sqlx::Error| AppError::internal("app.role.send_updated_role_event.app_error", e.to_string());
         match scheme.scope.as_str() {
             "team" => {
-                let ids: Vec<(String,)> = sqlx::query_as("SELECT Id FROM Teams WHERE SchemeId = $1 ORDER BY DisplayName LIMIT 100000")
-                    .bind(&scheme.id)
-                    .fetch_all(&self.db)
-                    .await
-                    .map_err(err)?;
+                let ids: Vec<(String,)> =
+                    sqlx::query_as("SELECT Id FROM Teams WHERE SchemeId = $1 ORDER BY DisplayName LIMIT 100000")
+                        .bind(&scheme.id)
+                        .fetch_all(&self.db)
+                        .await
+                        .map_err(err)?;
                 for (id,) in ids {
                     self.hub.publish("role_updated", data.clone(), Broadcast { team_id: id, ..Default::default() });
                 }
@@ -305,8 +324,12 @@ async fn patch_role(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, b
             .chain(perms.iter().filter(|p| !role.permissions.0.contains(p)));
         for p in changed {
             if NOT_ALLOWED.contains(&p.as_str()) {
-                return Err(AppError::new(StatusCode::NOT_IMPLEMENTED, "api.roles.patch_roles.not_allowed_permission.error", "")
-                    .detail(format!("Cannot add or remove permission: {p}")));
+                return Err(AppError::new(
+                    StatusCode::NOT_IMPLEMENTED,
+                    "api.roles.patch_roles.not_allowed_permission.error",
+                    "",
+                )
+                .detail(format!("Cannot add or remove permission: {p}")));
             }
         }
         // RemoveDuplicateStrings: sorted, unique.
@@ -314,8 +337,18 @@ async fn patch_role(St(app): St<State>, Auth(s): Auth, Path(id): Path<String>, b
         perms.dedup();
     }
     let scheme_role = [
-        "team_admin", "channel_admin", "system_user", "team_user", "channel_user", "system_guest", "team_guest",
-        "channel_guest", "playbook_admin", "playbook_member", "run_admin", "run_member",
+        "team_admin",
+        "channel_admin",
+        "system_user",
+        "team_user",
+        "channel_user",
+        "system_guest",
+        "team_guest",
+        "channel_guest",
+        "playbook_admin",
+        "playbook_member",
+        "run_admin",
+        "run_member",
     ]
     .contains(&role.name.as_str());
     let p = if scheme_role {
@@ -345,7 +378,11 @@ fn require_scheme_id(id: &str) -> ApiResult<()> {
 }
 
 /// `getSchemes`: newest first.
-async fn get_schemes(St(app): St<State>, Auth(s): Auth, Query(q): Query<HashMap<String, String>>) -> ApiResult<Json<Vec<Scheme>>> {
+async fn get_schemes(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Query(q): Query<HashMap<String, String>>,
+) -> ApiResult<Json<Vec<Scheme>>> {
     app.require(&s, "sysconsole_read_user_management_permissions").await?;
     let scope = q.get("scope").map(String::as_str).unwrap_or("");
     if !scope.is_empty() && scope != "team" && scope != "channel" {
@@ -402,8 +439,12 @@ async fn teams_for_scheme(
     }
     let (page, per_page) = paging(&q);
     let sql = format!("{} WHERE SchemeId = $1 ORDER BY DisplayName LIMIT $2 OFFSET $3", Team::SELECT);
-    let mut teams: Vec<Team> =
-        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&id).bind(per_page).bind(page * per_page).fetch_all(&app.db).await?;
+    let mut teams: Vec<Team> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&id)
+        .bind(per_page)
+        .bind(page * per_page)
+        .fetch_all(&app.db)
+        .await?;
     for t in &mut teams {
         app.sanitize_team(&s, t).await;
     }
@@ -423,8 +464,13 @@ async fn channels_for_scheme(
         return Err(AppError::bad_request("api.scheme.get_channels_for_scheme.scope.error", ""));
     }
     let (page, per_page) = paging(&q);
-    let sql = format!("{} WHERE SchemeId = $1 AND Type <> 'S' ORDER BY DisplayName LIMIT $2 OFFSET $3", Channel::SELECT);
-    let list: Vec<Channel> =
-        sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&id).bind(per_page).bind(page * per_page).fetch_all(&app.db).await?;
+    let sql =
+        format!("{} WHERE SchemeId = $1 AND Type <> 'S' ORDER BY DisplayName LIMIT $2 OFFSET $3", Channel::SELECT);
+    let list: Vec<Channel> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .bind(&id)
+        .bind(per_page)
+        .bind(page * per_page)
+        .fetch_all(&app.db)
+        .await?;
     Ok(Json(list).into_response())
 }

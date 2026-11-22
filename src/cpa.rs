@@ -25,7 +25,11 @@ pub fn routes() -> Router<State> {
 
 /// `LicenseCheckHook`: a stored field or value of the group, without a license.
 pub fn license_error() -> AppError {
-    AppError::new(StatusCode::FORBIDDEN, "app.property.license_error", "Your license does not support this property group.")
+    AppError::new(
+        StatusCode::FORBIDDEN,
+        "app.property.license_error",
+        "Your license does not support this property group.",
+    )
 }
 
 /// `GetPropertyGroup(access_control)`.
@@ -129,7 +133,12 @@ async fn patch_own_values(St(app): St<State>, Auth(s): Auth, body: Bytes) -> Api
 }
 
 /// `patchCPAValuesForUser`.
-async fn patch_user_values(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<String>, body: Bytes) -> ApiResult<Json<Value>> {
+async fn patch_user_values(
+    St(app): St<State>,
+    Auth(s): Auth,
+    Path(user_id): Path<String>,
+    body: Bytes,
+) -> ApiResult<Json<Value>> {
     let user_id = s.resolve(&user_id);
     if !is_valid_id(&user_id) {
         return Err(AppError::invalid_url_param("user_id"));
@@ -164,17 +173,20 @@ async fn patch_values(
         return Err(AppError::bad_request("api.property_value.patch.empty_body.app_error", ""));
     }
     if updates.len() > 100 {
-        return Err(AppError::bad_request("api.property_value.patch.too_many_items.request_error", "").with_param("Max", "100"));
+        return Err(
+            AppError::bad_request("api.property_value.patch.too_many_items.request_error", "").with_param("Max", "100")
+        );
     }
     let ids: Vec<String> = updates.keys().cloned().collect();
     if ids.iter().any(|id| !is_valid_id(id)) {
         return Err(AppError::bad_request("api.property_value.patch.invalid_field_id.app_error", ""));
     }
-    let found: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM PropertyFields WHERE GroupID = $1 AND ID = ANY($2) AND DeleteAt = 0")
-        .bind(&g)
-        .bind(&ids)
-        .fetch_one(&app.db)
-        .await?;
+    let found: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM PropertyFields WHERE GroupID = $1 AND ID = ANY($2) AND DeleteAt = 0")
+            .bind(&g)
+            .bind(&ids)
+            .fetch_one(&app.db)
+            .await?;
     if (found as usize) < ids.len() {
         // PropertyService.GetPropertyFields: every id must be a field of the group.
         return Err(AppError::not_found("app.property_field.not_found.app_error", ""));

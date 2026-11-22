@@ -1,0 +1,58 @@
+package main
+
+import (
+	"bytes"
+	"encoding/gob"
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type Field struct {
+	Title string
+	Value any
+	Short bool
+}
+type Attachment struct {
+	Text   string
+	Color  string
+	Fields []*Field
+}
+type Post struct {
+	Id       string
+	CreateAt int64
+	FileIds  []string
+	Props    map[string]any
+}
+
+func main() {
+	gob.Register([]any{})
+	gob.Register(map[string]any{})
+	gob.RegisterName("[]*model.SlackAttachment", []*Attachment{})
+	if len(os.Args) > 1 && os.Args[1] == "decode" {
+		dec := gob.NewDecoder(os.Stdin)
+		for i := 0; i < 2; i++ {
+			var p Post
+			err := dec.Decode(&p)
+			out, _ := json.Marshal(p)
+			fmt.Println(string(out), err)
+		}
+		return
+	}
+	var buf bytes.Buffer
+	enc := gob.NewEncoder(&buf)
+	p := Post{Id: "p1", CreateAt: 1700000000000, FileIds: []string{"f1"}, Props: map[string]any{
+		"from_webhook": "true",
+		"count":        3,
+		"nested":       []any{map[string]any{"a": []any{1.5, "x", map[string]any{"deep": true}}}},
+		"attachments":  []*Attachment{{Text: "hello", Color: "#f00", Fields: []*Field{{Title: "t", Value: "v", Short: true}, {Title: "n", Value: 42}}}},
+	}}
+	if err := enc.Encode(p); err != nil {
+		panic(err)
+	}
+	p.Id = "p2"
+	if err := enc.Encode(p); err != nil {
+		panic(err)
+	}
+	os.Stdout.Write(buf.Bytes())
+}

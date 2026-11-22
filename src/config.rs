@@ -376,7 +376,8 @@ fn sanitize_dsn(dsn: &str) -> String {
     let Ok(mut u) = reqwest::Url::parse(dsn) else { return String::new() };
     let _ = u.set_username("****");
     let _ = u.set_password(Some("****"));
-    let mut q: Vec<(String, String)> = u.query_pairs().filter(|(k, _)| k != "user" && k != "password").map(|(k, v)| (k.into(), v.into())).collect();
+    let mut q: Vec<(String, String)> =
+        u.query_pairs().filter(|(k, _)| k != "user" && k != "password").map(|(k, v)| (k.into(), v.into())).collect();
     q.sort();
     if q.is_empty() {
         u.set_query(None);
@@ -411,7 +412,10 @@ fn hex_decode(s: &str) -> Result<Vec<u8>, String> {
     let b = s.as_bytes();
     let digit = |i: usize| -> Result<u8, String> {
         let c = b[i];
-        (c as char).to_digit(16).map(|d| d as u8).ok_or_else(|| format!("encoding/hex: invalid byte: U+{:04X} {:?}", c, c as char))
+        (c as char)
+            .to_digit(16)
+            .map(|d| d as u8)
+            .ok_or_else(|| format!("encoding/hex: invalid byte: U+{:04X} {:?}", c, c as char))
     };
     let mut out = Vec::with_capacity(b.len() / 2);
     let mut i = 0;
@@ -506,15 +510,36 @@ pub fn sanitize(mut v: Value) -> Value {
             }
         }
     }
-    // PluginSettings.Sanitize: settings of plugins not installed are not returned.
+    // PluginSettings.Sanitize: settings of plugins not installed are not returned, secret ones are masked.
+    let dir = v.pointer("/PluginSettings/Directory").and_then(Value::as_str).unwrap_or("").to_string();
+    let installed = crate::plugins::secret_settings(&dir);
     if let Some(Value::Object(p)) = v.pointer_mut("/PluginSettings/Plugins") {
-        p.retain(|_, s| s.as_object().is_some_and(|m| m.is_empty()));
+        p.retain(|id, s| installed.contains_key(id) || s.as_object().is_some_and(|m| m.is_empty()));
+        for (id, s) in p.iter_mut() {
+            let (Some(secret), Some(m)) = (installed.get(id), s.as_object_mut()) else { continue };
+            for (k, x) in m.iter_mut() {
+                if secret.iter().any(|sk| sk.eq_ignore_ascii_case(k)) {
+                    *x = Value::String(FAKE_SETTING.into());
+                }
+            }
+        }
     }
     v
 }
 
 /// `desanitize`: a masked secret sent back means "unchanged".
 pub fn desanitize(old: &Value, new: &mut Value) {
+    if let Some(Value::Object(plugins)) = new.pointer_mut("/PluginSettings/Plugins") {
+        for (id, s) in plugins.iter_mut() {
+            let Some(m) = s.as_object_mut() else { continue };
+            for (k, x) in m.iter_mut() {
+                if x.as_str() == Some(FAKE_SETTING) {
+                    let was = old.get("PluginSettings").and_then(|p| p.get("Plugins")).and_then(|p| p.get(id));
+                    *x = was.and_then(|s| s.get(k)).cloned().unwrap_or(Value::Null);
+                }
+            }
+        }
+    }
     for (path, _) in SECRETS {
         let keys: Vec<&str> = path.split('.').collect();
         if lookup(new, &keys).and_then(Value::as_str) == Some(FAKE_SETTING) {
@@ -591,6 +616,14 @@ fn is_struct(schema: &Value) -> bool {
     schema.as_object().is_some_and(|m| !m.is_empty())
 }
 
+/// Map settings whose default is not empty: their keys are entries, not fields (the default's entries show the
+/// value's shape). Read as a struct, every plugin enabled besides the defaults would be dropped.
+const MAP_SETTINGS: &[&str] = &["PluginSettings.PluginStates"];
+
+fn is_map_setting(path: &str) -> bool {
+    MAP_SETTINGS.contains(&path.trim_end_matches('.'))
+}
+
 /// `json.Unmarshal` into `*model.Config`: what Go does not know is dropped, `null` stays nil, and a value of
 /// another type than the setting's is an error (its path). `lenient` (a stored config) drops such a value instead.
 pub fn conform(schema: &Value, v: &Value, lenient: bool) -> Result<Value, String> {
@@ -599,8 +632,10 @@ pub fn conform(schema: &Value, v: &Value, lenient: bool) -> Result<Value, String
             (_, Value::Null) => true,
             (Value::Object(sm), Value::Object(vm)) if !sm.is_empty() => {
                 let mut out = Map::new();
+                let map = is_map_setting(path);
                 for (k, x) in vm {
-                    if let Some(s) = sm.get(k)
+                    let s = if map { sm.values().next() } else { sm.get(k) };
+                    if let Some(s) = s
                         && let Some(c) = go(s, x, lenient, &format!("{path}{k}."))?
                     {
                         out.insert(k.clone(), c);
@@ -609,7 +644,9 @@ pub fn conform(schema: &Value, v: &Value, lenient: bool) -> Result<Value, String
                 return Ok(Some(Value::Object(out)));
             }
             (Value::Object(_), Value::Object(_)) | (Value::Null, _) => true,
-            (Value::Bool(_), Value::Bool(_)) | (Value::String(_), Value::String(_)) | (Value::Array(_), Value::Array(_)) => true,
+            (Value::Bool(_), Value::Bool(_))
+            | (Value::String(_), Value::String(_))
+            | (Value::Array(_), Value::Array(_)) => true,
             // Go's settings are integers.
             (Value::Number(_), Value::Number(n)) => n.is_i64() || n.is_u64(),
             _ => false,
@@ -707,7 +744,7 @@ pub fn merge_cfg(schema: &Value, base: &mut Value, patch: &Value, keep: &dyn Fn(
                 continue;
             }
             let full = format!("{path}{k}");
-            if is_struct(s) {
+            if is_struct(s) && !is_map_setting(&full) {
                 go(s, bm.entry(k.clone()).or_insert(Value::Null), p, keep, &format!("{full}."));
             } else if keep(&full) {
                 bm.insert(k.clone(), p.clone());
@@ -936,14 +973,8 @@ const FULL: &[(&str, &str)] = &[
     ("WranglerMoveThreadMaxCount", "WranglerSettings.MoveThreadMaxCount"),
     ("WranglerMoveThreadToAnotherTeamEnable", "WranglerSettings.MoveThreadToAnotherTeamEnable"),
     ("WranglerMoveThreadFromPrivateChannelEnable", "WranglerSettings.MoveThreadFromPrivateChannelEnable"),
-    (
-        "WranglerMoveThreadFromDirectMessageChannelEnable",
-        "WranglerSettings.MoveThreadFromDirectMessageChannelEnable",
-    ),
-    (
-        "WranglerMoveThreadFromGroupMessageChannelEnable",
-        "WranglerSettings.MoveThreadFromGroupMessageChannelEnable",
-    ),
+    ("WranglerMoveThreadFromDirectMessageChannelEnable", "WranglerSettings.MoveThreadFromDirectMessageChannelEnable"),
+    ("WranglerMoveThreadFromGroupMessageChannelEnable", "WranglerSettings.MoveThreadFromGroupMessageChannelEnable"),
 ];
 
 const FULL_FIXED: &[(&str, &str)] = &[
@@ -993,6 +1024,51 @@ mod tests {
         v["FileSettings"]["PublicLinkSalt"].as_str().unwrap_or("").to_string()
     }
 
+    /// `PluginStates` is a map: the plugins a config enables survive loading and patching, next to the defaults.
+    #[test]
+    fn plugin_states_are_a_map() {
+        let c = Config::from_raw(
+            serde_json::json!({"PluginSettings": {"PluginStates": {"jira": {"Enable": true}, "x": {"Enable": "no"}}}}),
+            String::new(),
+        );
+        let states = c.get("PluginSettings.PluginStates");
+        assert_eq!(states["jira"]["Enable"], true);
+        assert_eq!(states["x"], serde_json::json!({}));
+        assert!(states.get("playbooks").is_some());
+        let mut base = c.value().clone();
+        let patch = serde_json::json!({"PluginSettings": {"PluginStates": {"com.mattermost.gcal": {"Enable": true}}}});
+        merge_cfg(defaults(), &mut base, &patch, &|_| true);
+        assert_eq!(
+            base["PluginSettings"]["PluginStates"],
+            serde_json::json!({"com.mattermost.gcal": {"Enable": true}})
+        );
+    }
+
+    /// The settings of installed plugins are returned with their secret ones masked, and come back unchanged; a
+    /// plugin not installed has none returned.
+    #[test]
+    fn plugin_settings_sanitized() {
+        let dir = std::env::temp_dir().join(format!("ebachat-plugins-{}", crate::app::new_id()));
+        std::fs::create_dir_all(dir.join("jira")).unwrap();
+        let manifest = r#"{"id": "jira", "settings_schema": {"settings": [{"key": "Secret", "secret": true}]}}"#;
+        std::fs::write(dir.join("jira/plugin.json"), manifest).unwrap();
+        let mut raw = serde_json::json!({});
+        raw["PluginSettings"] = serde_json::json!({
+            "Directory": dir.to_string_lossy(),
+            "Plugins": {"jira": {"secret": "s3", "enablejiraui": true}, "gone": {"x": 1}},
+        });
+        let c = Config::from_raw(raw, String::new());
+        let s = c.sanitized();
+        assert_eq!(
+            s["PluginSettings"]["Plugins"],
+            serde_json::json!({"jira": {"secret": FAKE_SETTING, "enablejiraui": true}})
+        );
+        let mut back = s.clone();
+        desanitize(c.value(), &mut back);
+        assert_eq!(back["PluginSettings"]["Plugins"]["jira"]["secret"], "s3");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     /// A missing or empty `PublicLinkSalt` is generated on load, reload and save, and kept in the source.
     #[tokio::test]
     async fn link_salt_is_generated_and_kept() {
@@ -1007,7 +1083,8 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("config.json").to_string_lossy().into_owned();
         let stored = || serde_json::from_slice::<Value>(&std::fs::read(&path).unwrap()).unwrap();
-        std::fs::write(&path, r#"{"ServiceSettings": {"SiteURL": ""}, "FileSettings": {"PublicLinkSalt": ""}}"#).unwrap();
+        std::fs::write(&path, r#"{"ServiceSettings": {"SiteURL": ""}, "FileSettings": {"PublicLinkSalt": ""}}"#)
+            .unwrap();
         let c = Config::from_raw(read_source(&path).await.unwrap(), path.clone());
         c.reload().await.unwrap();
         assert!(ok(&salt(&stored())));
@@ -1024,7 +1101,8 @@ mod tests {
 
     #[test]
     fn env_overrides_by_section_and_type() {
-        let mut v = serde_json::json!({"ServiceSettings": {"SiteURL": "", "EnableDeveloper": true, "WebsocketPort": 80}});
+        let mut v =
+            serde_json::json!({"ServiceSettings": {"SiteURL": "", "EnableDeveloper": true, "WebsocketPort": 80}});
         let _ = apply_env(
             &mut v,
             [

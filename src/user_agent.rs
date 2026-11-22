@@ -22,8 +22,13 @@ fn version_after<'a>(ua: &'a str, prefix: &str) -> Option<&'a str> {
 
 /// `major.minor` or `major.minor.patch` as uasurfer prints it, from a dotted version.
 fn ua_version(v: &str) -> String {
-    let n: Vec<u64> = v.split('.').take(3).map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0)).collect();
-    let (ma, mi, pa) = (n.first().copied().unwrap_or(0), n.get(1).copied().unwrap_or(0), n.get(2).copied().unwrap_or(0));
+    let n: Vec<u64> = v
+        .split('.')
+        .take(3)
+        .map(|p| p.chars().take_while(char::is_ascii_digit).collect::<String>().parse().unwrap_or(0))
+        .collect();
+    let (ma, mi, pa) =
+        (n.first().copied().unwrap_or(0), n.get(1).copied().unwrap_or(0), n.get(2).copied().unwrap_or(0));
     if pa == 0 { format!("{ma}.{mi}") } else { format!("{ma}.{mi}.{pa}") }
 }
 
@@ -85,7 +90,11 @@ pub fn parse(ua: &str) -> Agent {
                 "Safari" => "Version/",
                 _ => "",
             };
-            if token.is_empty() { "0.0".into() } else { version_after(ua, token).map(ua_version).unwrap_or_else(|| "0.0".into()) }
+            if token.is_empty() {
+                "0.0".into()
+            } else {
+                version_after(ua, token).map(ua_version).unwrap_or_else(|| "0.0".into())
+            }
         });
     Agent { platform, os, browser: format!("{name}/{version}") }
 }
@@ -110,9 +119,13 @@ mod tests {
     fn agents() {
         let a = super::parse("curl/8.7.1");
         assert_eq!((a.platform, a.os, a.browser.as_str()), ("Unknown", "", "Unknown/0.0"));
-        let c = super::parse("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36");
+        let c = super::parse(
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
+        );
         assert_eq!((c.platform, c.os, c.browser.as_str()), ("Macintosh", "Mac OS", "Chrome/126.0"));
-        let d = super::parse("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Mattermost/5.9.0 Chrome/124.0.6367.243 Electron/30.1.2 Safari/537.36");
+        let d = super::parse(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Mattermost/5.9.0 Chrome/124.0.6367.243 Electron/30.1.2 Safari/537.36",
+        );
         assert_eq!((d.platform, d.os, d.browser.as_str()), ("Windows", "Windows 10", "Desktop App/5.9.0"));
     }
 }

@@ -5,8 +5,8 @@
 
 use std::collections::{BTreeMap, HashMap};
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -14,7 +14,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 
-use crate::app::{ApiResult, App, AppError, Auth, BusyAuth, Body, State, is_valid_id};
+use crate::app::{ApiResult, App, AppError, Auth, Body, BusyAuth, State, is_valid_id};
 use crate::channels::{self as ch, WithTeam, sanitize_member};
 use crate::db::{self, Table};
 use crate::model::channel::{DIRECT, GROUP, OPEN, OPEN_BOARD, PRIVATE};
@@ -32,14 +32,20 @@ pub fn routes() -> Router<State> {
         .route(&format!("{c}/stats/member_count"), post(channels_member_count))
         .route(&format!("{c}/members/{{user_id}}/view"), post(view_channel))
         .route(&format!("{c}/members/{{user_id}}/mark_read"), post(read_multiple))
-        .route(&format!("{c}/{{channel_id}}"), get(get_channel).delete(delete_channel).put(crate::channel_admin::update_channel))
+        .route(
+            &format!("{c}/{{channel_id}}"),
+            get(get_channel).delete(delete_channel).put(crate::channel_admin::update_channel),
+        )
         .route(&format!("{c}/{{channel_id}}/patch"), put(patch_channel))
         .route(&format!("{c}/{{channel_id}}/privacy"), put(update_privacy))
         .route(&format!("{c}/{{channel_id}}/restore"), post(restore_channel))
         .route(&format!("{c}/{{channel_id}}/stats"), get(channel_stats))
         .route(&format!("{c}/{{channel_id}}/timezones"), get(channel_timezones))
         .route(&format!("{c}/{{channel_id}}/common_teams"), get(common_teams))
-        .route(&format!("{c}/{{channel_id}}/members"), post(add_member).get(crate::channel_admin::get_members).put(crate::channel_admin::set_members))
+        .route(
+            &format!("{c}/{{channel_id}}/members"),
+            post(add_member).get(crate::channel_admin::get_members).put(crate::channel_admin::set_members),
+        )
         .route(&format!("{c}/{{channel_id}}/members/ids"), post(members_by_ids))
         .route(&format!("{c}/{{channel_id}}/members/{{user_id}}"), get(get_member).delete(remove_member))
         .route(&format!("{c}/{{channel_id}}/members/{{user_id}}/notify_props"), put(update_notify_props))
@@ -1050,8 +1056,9 @@ async fn channels_for_team_for_user(
     St(app): St<State>,
     Auth(s): Auth,
     Path((user_id, team_id)): Path<(String, String)>,
+    headers: axum::http::HeaderMap,
     q: Q,
-) -> ApiResult<Json<Vec<Channel>>> {
+) -> ApiResult<Response> {
     let user_id = user_param(&s, &user_id)?;
     require_id(&team_id, "team_id")?;
     app.require_user(&s, &user_id).await?;
@@ -1063,8 +1070,26 @@ async fn channels_for_team_for_user(
     let mut list =
         channels_for_team_for_user_list(&app, &team_id, &user_id, parse_bool(q.get("include_deleted")), last_delete_at)
             .await?;
+    let etag = channel_list_etag(&list);
+    if let Some(r) = crate::teams::not_modified(&headers, &etag) {
+        return Ok(r);
+    }
     app.fill_channel_props(&mut list).await?;
-    Ok(Json(list))
+    Ok(crate::teams::with_etag(Json(list), &etag))
+}
+
+/// `ChannelList.Etag`: the channel posted in or updated last, and how many there are.
+fn channel_list_etag(list: &[Channel]) -> String {
+    let (mut id, mut t) = ("0", 0i64);
+    for c in list {
+        if c.last_post_at > t {
+            (id, t) = (&c.id, c.last_post_at);
+        }
+        if c.update_at > t {
+            (id, t) = (&c.id, c.update_at);
+        }
+    }
+    format!("{}.{id}.{t}.0.{}", crate::SERVER_VERSION, list.len())
 }
 
 /// `getChannelsForUser`: every channel of the user, in pages of 100 by id.
@@ -1195,5 +1220,23 @@ async fn channel_members_for_user(
 impl<T: serde::Serialize> serde::Serialize for perm::WithScheme<T> {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         self.0.serialize(s)
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use crate::model::Channel;
+
+    #[test]
+    fn channel_list_etag() {
+        let v = crate::SERVER_VERSION;
+        let c = |id: &str, post: i64, upd: i64| Channel {
+            id: id.into(),
+            last_post_at: post,
+            update_at: upd,
+            ..Default::default()
+        };
+        assert_eq!(super::channel_list_etag(&[]), format!("{v}.0.0.0.0"));
+        assert_eq!(super::channel_list_etag(&[c("a", 5, 1), c("b", 2, 9), c("c", 9, 0)]), format!("{v}.b.9.0.3"));
     }
 }

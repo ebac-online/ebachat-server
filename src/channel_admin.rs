@@ -8,8 +8,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use axum::extract::{Path, State as St};
 use crate::app::Query;
+use axum::extract::{Path, State as St};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, patch, post, put};
@@ -209,8 +209,12 @@ async fn get_all_channels(St(app): St<State>, Auth(s): Auth, q: Q) -> ApiResult<
         list.push(w);
     }
     // sanitizeAllChannelsResponse
-    if !has_any_perm(&app, &s, &[SYSCONSOLE_READ_COMPLIANCE_DATA_RETENTION_POLICY, SYSCONSOLE_READ_USERMANAGEMENT_CHANNELS])
-        .await
+    if !has_any_perm(
+        &app,
+        &s,
+        &[SYSCONSOLE_READ_COMPLIANCE_DATA_RETENTION_POLICY, SYSCONSOLE_READ_USERMANAGEMENT_CHANNELS],
+    )
+    .await
     {
         for w in &mut list {
             let c = &w.inner;
@@ -271,8 +275,7 @@ pub async fn update_channel(
         return Err(AppError::invalid_param("channel_id"));
     }
     let mut old = (*app.get_channel(&new.id).await?).clone();
-    let forbidden =
-        || AppError::new(StatusCode::FORBIDDEN, "api.channel.patch_update_channel.forbidden.app_error", "");
+    let forbidden = || AppError::new(StatusCode::FORBIDDEN, "api.channel.patch_update_channel.forbidden.app_error", "");
     match old.r#type.as_str() {
         OPEN => app.require_channel(&s, &channel_id, perm::MANAGE_PUBLIC_CHANNEL_PROPERTIES).await?,
         PRIVATE => app.require_channel(&s, &channel_id, perm::MANAGE_PRIVATE_CHANNEL_PROPERTIES).await?,
@@ -409,7 +412,9 @@ pub async fn set_members(
     let ranged = |k: &str, d: i64, min: i64, max: i64| -> ApiResult<i64> {
         match q.get(k).filter(|v| !v.is_empty()) {
             None => Ok(d),
-            Some(v) => v.parse::<i64>().ok().filter(|n| (min..=max).contains(n)).ok_or_else(|| AppError::invalid_url_param(k)),
+            Some(v) => {
+                v.parse::<i64>().ok().filter(|n| (min..=max).contains(n)).ok_or_else(|| AppError::invalid_url_param(k))
+            }
         }
     };
     let batch_size = ranged("batch_size", 100, 1, 1000)? as usize;
@@ -453,11 +458,14 @@ pub async fn set_members(
     }
 
     // SetChannelMembers
-    let current: Vec<String> =
-        sqlx::query_scalar("SELECT UserId FROM ChannelMembers WHERE ChannelId = $1").bind(&channel_id).fetch_all(&app.db).await?;
+    let current: Vec<String> = sqlx::query_scalar("SELECT UserId FROM ChannelMembers WHERE ChannelId = $1")
+        .bind(&channel_id)
+        .fetch_all(&app.db)
+        .await?;
     let current_set: HashSet<&String> = current.iter().collect();
     let desired_set: HashSet<&String> = desired.iter().collect();
-    let to_add: Vec<String> = desired_set.iter().filter(|id| !current_set.contains(*id)).map(|s| s.to_string()).collect();
+    let to_add: Vec<String> =
+        desired_set.iter().filter(|id| !current_set.contains(*id)).map(|s| s.to_string()).collect();
     let to_remove: Vec<String> = current.iter().filter(|id| !desired_set.contains(id)).cloned().collect();
     if channel.r#type == PRIVATE && desired.is_empty() {
         return Err(AppError::bad_request("app.channel.set_members.empty_private.app_error", ""));
@@ -734,8 +742,14 @@ async fn move_channel(
     let message = crate::i18n::t("api.team.move_channel.success")
         .unwrap_or("This channel has been moved to this team from %v.")
         .replace("%v", &previous.name);
-    app.post_system(system_post(&moved.id, &user.id, "system_move_channel", message, json!({"username": user.username})))
-        .await;
+    app.post_system(system_post(
+        &moved.id,
+        &user.id,
+        "system_move_channel",
+        message,
+        json!({"username": user.username}),
+    ))
+    .await;
     crate::audit::log(&app, Some(&s), &format!("channel={}", channel.name)).await;
     crate::audit::log(&app, Some(&s), &format!("team={}", team.name)).await;
     // The handler answers with the channel as it was read, before the move.
@@ -806,7 +820,8 @@ async fn members_minus_group_members(
         db::cols::<User>("Users"),
         page * per_page
     );
-    let rows: Vec<PgRow> = sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&channel_id).bind(&group_ids).fetch_all(&app.db).await?;
+    let rows: Vec<PgRow> =
+        sqlx::query(sqlx::AssertSqlSafe(sql)).bind(&channel_id).bind(&group_ids).fetch_all(&app.db).await?;
     let show = Show {
         email: app.cfg.bool("PrivacySettings.ShowEmailAddress"),
         fullname: app.cfg.bool("PrivacySettings.ShowFullName"),

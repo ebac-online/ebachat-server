@@ -433,7 +433,8 @@ impl Parser<'_> {
             }
             _ => {
                 let start = self.i;
-                while self.i < self.b.len() && matches!(self.b[self.i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9') {
+                while self.i < self.b.len() && matches!(self.b[self.i], b'-' | b'+' | b'.' | b'e' | b'E' | b'0'..=b'9')
+                {
                     self.i += 1;
                 }
                 GVal::Num(String::from_utf8_lossy(&self.b[start..self.i]).into_owned())
@@ -469,7 +470,10 @@ impl Parser<'_> {
                                 && (0xDC00..0xE000).contains(&r2)
                             {
                                 self.i += 6;
-                                out.push(char::from_u32(0x10000 + ((r - 0xD800) << 10) + (r2 - 0xDC00)).unwrap_or('\u{FFFD}'));
+                                out.push(
+                                    char::from_u32(0x10000 + ((r - 0xD800) << 10) + (r2 - 0xDC00))
+                                        .unwrap_or('\u{FFFD}'),
+                                );
                             } else {
                                 out.push('\u{FFFD}');
                             }
@@ -532,18 +536,32 @@ pub fn to_value(v: &GVal) -> Value {
 #[derive(Clone, Copy)]
 pub enum Ty {
     /// A string kind, its Go type name (`string`, `model.ChannelType`).
-    Str { go: &'static str, ptr: bool },
+    Str {
+        go: &'static str,
+        ptr: bool,
+    },
     /// An integer kind, its Go type name (`int64`, `int`).
-    Int { go: &'static str },
+    Int {
+        go: &'static str,
+    },
     Bool,
     /// `[]string`.
     StrList,
     /// A struct (behind a pointer, or not).
-    Struct { st: &'static Struct, ptr: bool },
+    Struct {
+        st: &'static Struct,
+        ptr: bool,
+    },
     /// A slice of structs, its Go type name (`[]imports.ReactionImportData`); `elem_ptr` for `[]*T`.
-    StructList { st: &'static Struct, go: &'static str, elem_ptr: bool },
+    StructList {
+        st: &'static Struct,
+        go: &'static str,
+        elem_ptr: bool,
+    },
     /// `map[string]any` under a type name (`model.StringInterface`).
-    Map { go: &'static str },
+    Map {
+        go: &'static str,
+    },
     /// `json.RawMessage`: any value as it is.
     Raw,
     /// `time.Time` (its own `UnmarshalJSON`: a string, else its error).
@@ -614,7 +632,11 @@ impl Ctx {
         self.first = Some(if self.stack.is_empty() {
             format!("json: cannot unmarshal {value} into Go value of type {go}")
         } else {
-            format!("json: cannot unmarshal {value} into Go struct field {}.{} of type {go}", self.strct, self.stack.join("."))
+            format!(
+                "json: cannot unmarshal {value} into Go struct field {}.{} of type {go}",
+                self.strct,
+                self.stack.join(".")
+            )
         });
     }
 }
@@ -823,11 +845,26 @@ mod tests {
         let v = unmarshal("{\"prop\u{17F}\":{\"a\":1},\"inner\":null}".as_bytes(), &OUTER).unwrap();
         assert_eq!(v, serde_json::json!({"props": {"a": 1}}));
         let e = |s: &str| unmarshal(s.as_bytes(), &OUTER).unwrap_err();
-        assert_eq!(e(r#"{"count":1.5}"#), "json: cannot unmarshal number 1.5 into Go struct field Outer.count of type int64");
-        assert_eq!(e(r#"{"inner":{"name":5}}"#), "json: cannot unmarshal number into Go struct field Inner.inner.name of type string");
-        assert_eq!(e(r#"{"list":[{"name":true}]}"#), "json: cannot unmarshal bool into Go struct field Inner.list.name of type string");
-        assert_eq!(e(r#"{"list":"x","count":"y"}"#), "json: cannot unmarshal string into Go struct field Outer.list of type []p.Inner");
-        assert_eq!(e(r#"{"props":[1]}"#), "json: cannot unmarshal array into Go struct field Outer.props of type model.StringInterface");
+        assert_eq!(
+            e(r#"{"count":1.5}"#),
+            "json: cannot unmarshal number 1.5 into Go struct field Outer.count of type int64"
+        );
+        assert_eq!(
+            e(r#"{"inner":{"name":5}}"#),
+            "json: cannot unmarshal number into Go struct field Inner.inner.name of type string"
+        );
+        assert_eq!(
+            e(r#"{"list":[{"name":true}]}"#),
+            "json: cannot unmarshal bool into Go struct field Inner.list.name of type string"
+        );
+        assert_eq!(
+            e(r#"{"list":"x","count":"y"}"#),
+            "json: cannot unmarshal string into Go struct field Outer.list of type []p.Inner"
+        );
+        assert_eq!(
+            e(r#"{"props":[1]}"#),
+            "json: cannot unmarshal array into Go struct field Outer.props of type model.StringInterface"
+        );
         assert_eq!(e("[1]"), "json: cannot unmarshal array into Go value of type p.Outer");
         let v = unmarshal(br#"{"type":"a","type":null,"props":{"a":1},"PROPS":{"b":"\ud800x"}}"#, &OUTER).unwrap();
         assert_eq!(v, serde_json::json!({"type": "a", "props": {"a": 1, "b": "\u{FFFD}x"}}));

@@ -45,8 +45,16 @@ impl App {
             if deleted != 0 {
                 // Auto-heal: enabled again, as UpdateBotActive.
                 let now = now_ms();
-                sqlx::query("UPDATE Bots SET DeleteAt = 0, UpdateAt = $1 WHERE UserId = $2").bind(now).bind(&id).execute(&self.db).await?;
-                sqlx::query("UPDATE Users SET DeleteAt = 0, UpdateAt = $1 WHERE Id = $2").bind(now).bind(&id).execute(&self.db).await?;
+                sqlx::query("UPDATE Bots SET DeleteAt = 0, UpdateAt = $1 WHERE UserId = $2")
+                    .bind(now)
+                    .bind(&id)
+                    .execute(&self.db)
+                    .await?;
+                sqlx::query("UPDATE Users SET DeleteAt = 0, UpdateAt = $1 WHERE Id = $2")
+                    .bind(now)
+                    .bind(&id)
+                    .execute(&self.db)
+                    .await?;
                 self.invalidate_user(&id);
             }
             return Ok(id);
@@ -114,11 +122,19 @@ impl App {
                     &[("SiteURL", &site), ("TeamName", &team), ("PostId", &post_id), ("Username", &username)],
                 )
                 .unwrap_or_default();
-                let mut dm = Post { channel_id: ch.id.clone(), message, r#type: "reminder".into(), user_id: bot.clone(), ..Default::default() };
+                let mut dm = Post {
+                    channel_id: ch.id.clone(),
+                    message,
+                    r#type: "reminder".into(),
+                    user_id: bot.clone(),
+                    ..Default::default()
+                };
                 for (k, v) in [("team_name", &team), ("post_id", &post_id), ("username", &username)] {
                     dm.props.0.insert(k.into(), Value::String(v.clone()));
                 }
-                if let Err(e) = self.create_post_in(dm, &ch, CreateFlags { set_online: true, ..Default::default() }, None).await {
+                if let Err(e) =
+                    self.create_post_in(dm, &ch, CreateFlags { set_online: true, ..Default::default() }, None).await
+                {
                     eprintln!("post reminder for {user_id}: {} {}", e.id, e.detailed_error);
                 }
             }

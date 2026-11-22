@@ -1,0 +1,13 @@
+[package]
+name = "goplugin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "Runs server plugins: HashiCorp go-plugin over net/rpc and gob, from the host side"
+publish = false
+
+[dependencies]
+anyhow = "1.0.104"
+tokio = { version = "1.54.1", features = ["full"] }
+tokio-yamux = "0.3.20"
+futures-util = "0.3.34"

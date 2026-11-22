@@ -144,7 +144,10 @@ mod tests {
             super::to_go_json(&v, false),
             r#"{"ServiceSettings":{"SiteURL":"","ListenAddress":":1"},"TeamSettings":{"SiteName":"x"},"Zzz":{"a":[],"b":1}}"#
         );
-        assert_eq!(super::to_go_json(&serde_json::json!({"a": "<&>\u{2028}"}), false), "{\"a\":\"\\u003c\\u0026\\u003e\\u2028\"}");
+        assert_eq!(
+            super::to_go_json(&serde_json::json!({"a": "<&>\u{2028}"}), false),
+            "{\"a\":\"\\u003c\\u0026\\u003e\\u2028\"}"
+        );
         assert!(super::to_go_json(&v, true).starts_with("{\n    \"ServiceSettings\": {\n        \"SiteURL\": \"\","));
     }
 }

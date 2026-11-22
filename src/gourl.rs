@@ -128,7 +128,8 @@ pub fn path_escape(s: &str) -> String {
 fn valid_encoded(s: &str, mode: Mode) -> bool {
     for &c in s.as_bytes() {
         match c {
-            b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' | b'[' | b']' => {}
+            b'!' | b'$' | b'&' | b'\'' | b'(' | b')' | b'*' | b'+' | b',' | b';' | b'=' | b':' | b'@' | b'[' | b']' => {
+            }
             b'%' => {}
             _ if should_escape(c, mode) => return false,
             _ => {}
@@ -455,14 +456,20 @@ mod tests {
     #[test]
     fn parse_and_print() {
         let u = Url::parse("http://localhost:8065/cb?x=1&y=a+b#frag").unwrap();
-        assert_eq!((u.scheme.as_str(), u.host.as_str(), u.raw_path.as_str(), u.raw_query.as_str()), ("http", "localhost:8065", "/cb", "x=1&y=a+b"));
+        assert_eq!(
+            (u.scheme.as_str(), u.host.as_str(), u.raw_path.as_str(), u.raw_query.as_str()),
+            ("http", "localhost:8065", "/cb", "x=1&y=a+b")
+        );
         assert_eq!(u.to_go_string(), "http://localhost:8065/cb?x=1&y=a+b#frag");
         assert_eq!(u.query().get("y"), "a b");
         let m = Url::parse("mmauth://callback").unwrap();
         assert_eq!((m.scheme.as_str(), m.host.as_str(), m.raw_path.as_str()), ("mmauth", "callback", ""));
         assert!(Url::parse("http://a b.com/%zz").is_err());
         assert_eq!(url_join_path("http://x.org", "/oauth/authorize").unwrap(), "http://x.org/oauth/authorize");
-        assert_eq!(url_join_path("http://x.org/chat/", "/oauth/authorize").unwrap(), "http://x.org/chat/oauth/authorize");
+        assert_eq!(
+            url_join_path("http://x.org/chat/", "/oauth/authorize").unwrap(),
+            "http://x.org/chat/oauth/authorize"
+        );
         assert_eq!(url_join_path("http://x.org", "/a/../../b").unwrap(), "http://x.org/b");
         let mut v = Values::default();
         v.set("state", "s t");

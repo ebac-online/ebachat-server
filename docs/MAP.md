@@ -251,6 +251,7 @@ Code by area:
 | Posts | `posts.rs`, `notify.rs`, `threads.rs`, `reactions.rs`, `drafts.rs`, `search.rs` |
 | Files | `files.rs`, `file_api.rs`, `images.rs`, `opengraph.rs`, `search_params.rs` |
 | Integrations | `commands.rs`, `commands_builtin.rs`, `integrations.rs` (actions, dialogs), `webhooks.rs`, `reminders.rs` |
+| Plugins | `plugins/` (manager, API, routes, key-value store; see `docs/PLUGINS.md`), the `goplugin` crate (protocol) |
 | Jobs | `jobs.rs`, `job_workers.rs`, `extract.rs`, `bulk_export.rs`, `bulk_import.rs`, `import_functions.rs` |
 | Admin | `admin.rs`, `audit.rs` (Audits rows), `logs.rs` (server log, `/logs`, startup lines), `license.rs`, `permanent.rs`, `cpa.rs`, `config_order.rs`; see `docs/ADMIN.md` |
 | HTTP | `api.rs` (router, Go's headers, `HEAD`), `compress.rs` (gzhttp), `web.rs` |

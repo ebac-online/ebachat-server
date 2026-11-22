@@ -51,7 +51,12 @@ pub fn parse(files: &[(&str, &str)]) -> anyhow::Result<Vec<Migration>> {
         .iter()
         .map(|(file, sql)| {
             let c = FILE.captures(file).ok_or_else(|| anyhow::anyhow!("could not parse file: {file}"))?;
-            Ok(Migration { version: c[1].parse::<u64>()? as u32, name: c[2].to_string(), up: &c[3] == "up", sql: sql.to_string() })
+            Ok(Migration {
+                version: c[1].parse::<u64>()? as u32,
+                name: c[2].to_string(),
+                up: &c[3] == "up",
+                sql: sql.to_string(),
+            })
         })
         .collect()
 }
@@ -104,10 +109,14 @@ async fn apply_set(db: &PgPool, set: &Set, timeout: i64) -> anyhow::Result<()> {
     )))
     .execute(db)
     .await?;
-    let applied: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT name FROM {table}"))).fetch_all(db).await?;
+    let applied: Vec<String> =
+        sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT name FROM {table}"))).fetch_all(db).await?;
     for m in pending(&applied, &set.files)? {
         let start = std::time::Instant::now();
-        crate::logs::info(&format!("== {}: migrating (up) ==", m.name), &[("table", json!(table)), ("version", json!(m.version))]);
+        crate::logs::info(
+            &format!("== {}: migrating (up) ==", m.name),
+            &[("table", json!(table)), ("version", json!(m.version))],
+        );
         let apply = apply_one(db, table, &m);
         match tokio::time::timeout(Duration::from_secs(timeout.max(1) as u64), apply).await {
             Ok(r) => r.map_err(|e| anyhow::anyhow!("failed to apply migration {} {}: {e}", m.version, m.name))?,
@@ -169,11 +178,15 @@ WHERE (Version, Name) IN (
 )",
     )];
     for (name, min, fix) in FIXES {
-        let applied: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM db_migrations WHERE Version >= $1)").bind(min).fetch_one(db).await?;
+        let applied: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM db_migrations WHERE Version >= $1)")
+            .bind(min)
+            .fetch_one(db)
+            .await?;
         if !applied {
             continue;
         }
-        let done: Option<String> = sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = $1").bind(name).fetch_optional(db).await?;
+        let done: Option<String> =
+            sqlx::query_scalar("SELECT Value FROM Systems WHERE Name = $1").bind(name).fetch_optional(db).await?;
         if done.as_deref() == Some("true") {
             continue;
         }
@@ -199,7 +212,10 @@ impl Lock {
     pub async fn acquire(db: &PgPool, key: &str) -> anyhow::Result<Lock> {
         // Two servers starting on an empty database race on this CREATE ... IF NOT EXISTS, and Postgres fails the
         // loser ("type db_lock already exists"): the table is there all the same.
-        if let Err(e) = sqlx::query("CREATE TABLE IF NOT EXISTS db_lock (id varchar(64) PRIMARY KEY, expireat bigint);").execute(db).await {
+        if let Err(e) = sqlx::query("CREATE TABLE IF NOT EXISTS db_lock (id varchar(64) PRIMARY KEY, expireat bigint);")
+            .execute(db)
+            .await
+        {
             let exists: bool = sqlx::query_scalar("SELECT to_regclass('db_lock') IS NOT NULL").fetch_one(db).await?;
             if !exists {
                 return Err(e.into());
@@ -222,7 +238,11 @@ impl Lock {
             t.tick().await;
             loop {
                 t.tick().await;
-                let r = sqlx::query("UPDATE db_lock SET expireat = expireat + $1 WHERE id = $2").bind(LOCK_TTL).bind(&key2).execute(&db2).await;
+                let r = sqlx::query("UPDATE db_lock SET expireat = expireat + $1 WHERE id = $2")
+                    .bind(LOCK_TTL)
+                    .bind(&key2)
+                    .execute(&db2)
+                    .await;
                 if r.is_err() {
                     return;
                 }
@@ -267,7 +287,8 @@ mod tests {
 
     #[test]
     fn parses_names_as_morph() {
-        let m = parse(&[("000001_create_teams.up.sql", "x"), ("000242_create_legacy_attribute_view.down.sql", "y")]).unwrap();
+        let m = parse(&[("000001_create_teams.up.sql", "x"), ("000242_create_legacy_attribute_view.down.sql", "y")])
+            .unwrap();
         assert_eq!((m[0].version, m[0].name.as_str(), m[0].up), (1, "create_teams", true));
         assert_eq!((m[1].version, m[1].name.as_str(), m[1].up), (242, "create_legacy_attribute_view", false));
         assert!(parse(&[("README.md", "")]).is_err());

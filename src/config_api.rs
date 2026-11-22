@@ -7,8 +7,8 @@
 
 use std::collections::HashSet;
 
-use axum::extract::State as St;
 use crate::app::Query;
+use axum::extract::State as St;
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post, put};
@@ -60,6 +60,9 @@ impl App {
     pub async fn config_changed(&self, old: &Value, new: &Value) {
         crate::job_workers::config_changed(self, old, new).await;
         crate::logs::configure(new);
+        if let Some(app) = self.hub.app() {
+            crate::plugins::config_changed(app);
+        }
         let strip = |v: &Value| {
             let mut v = v.clone();
             if let Some(m) = v.as_object_mut() {
@@ -204,7 +207,9 @@ fn decode_config(body: &[u8]) -> ApiResult<Value> {
         return Err(AppError::invalid_param("config"));
     }
     if !v.is_object() {
-        return Err(AppError::invalid_param("config").detail("json: cannot unmarshal into Go value of type model.Config"));
+        return Err(
+            AppError::invalid_param("config").detail("json: cannot unmarshal into Go value of type model.Config")
+        );
     }
     conform(defaults(), &v, false).map_err(|path| {
         AppError::invalid_param("config").detail(format!("json: cannot unmarshal into Go struct field Config.{path}"))
@@ -267,7 +272,8 @@ async fn update_config(St(app): St<State>, Auth(s): Auth, body: axum::body::Byte
         return Err(permission_error("sysconsole_write_*"));
     }
     let app_cfg = app.cfg.value();
-    if !app.cfg.str("ServiceSettings.SiteURL").is_empty() && ptr(&cfg, "/ServiceSettings/SiteURL").as_str() == Some("") {
+    if !app.cfg.str("ServiceSettings.SiteURL").is_empty() && ptr(&cfg, "/ServiceSettings/SiteURL").as_str() == Some("")
+    {
         return Err(clear_site_url());
     }
     let mut new = app_cfg.clone();
@@ -301,7 +307,8 @@ async fn patch_config(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes
         return Err(permission_error("sysconsole_write_*"));
     }
     let app_cfg = app.cfg.value();
-    if !app.cfg.str("ServiceSettings.SiteURL").is_empty() && ptr(&cfg, "/ServiceSettings/SiteURL").as_str() == Some("") {
+    if !app.cfg.str("ServiceSettings.SiteURL").is_empty() && ptr(&cfg, "/ServiceSettings/SiteURL").as_str() == Some("")
+    {
         return Err(clear_site_url());
     }
     let uploads = ptr(&cfg, "/PluginSettings/EnableUploads").clone();
@@ -309,14 +316,22 @@ async fn patch_config(St(app): St<State>, Auth(s): Auth, body: axum::body::Bytes
         return Err(not_allowed("PluginSettings.EnableUploads"));
     }
     if !ptr(&cfg, "/PluginSettings/SignaturePublicKeyFiles").is_null() {
-        set(&mut cfg, "/PluginSettings/SignaturePublicKeyFiles", ptr(app_cfg, "/PluginSettings/SignaturePublicKeyFiles").clone());
+        set(
+            &mut cfg,
+            "/PluginSettings/SignaturePublicKeyFiles",
+            ptr(app_cfg, "/PluginSettings/SignaturePublicKeyFiles").clone(),
+        );
     }
     let dir = ptr(&cfg, "/ImportSettings/Directory");
     if !dir.is_null() && dir != ptr(app_cfg, "/ImportSettings/Directory") {
         return Err(not_allowed("ImportSettings.Directory"));
     }
     let market = ptr(&cfg, "/PluginSettings/MarketplaceURL");
-    if !market.is_null() && !uploads.is_null() && market != ptr(app_cfg, "/PluginSettings/MarketplaceURL") && uploads == false {
+    if !market.is_null()
+        && !uploads.is_null()
+        && market != ptr(app_cfg, "/PluginSettings/MarketplaceURL")
+        && uploads == false
+    {
         return Err(not_allowed("PluginSettings.MarketplaceURL"));
     }
     if !ptr(&cfg, "/MessageExportSettings/EnableExport").is_null() {
@@ -343,11 +358,8 @@ async fn reload_config(St(app): St<State>, Auth(s): Auth) -> ApiResult<Response>
     if !app.has_perm(&s, "reload_config").await || app.cfg.bool("ExperimentalSettings.RestrictSystemAdmin") {
         return Err(permission_error("reload_config"));
     }
-    let (old, new) = app
-        .cfg
-        .reload()
-        .await
-        .map_err(|e| AppError::internal("api.config.reload_config.app_error", e.to_string()))?;
+    let (old, new) =
+        app.cfg.reload().await.map_err(|e| AppError::internal("api.config.reload_config.app_error", e.to_string()))?;
     app.config_changed(old, new).await;
     Ok(([NO_CACHE], crate::users::ok()).into_response())
 }

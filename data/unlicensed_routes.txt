@@ -111,16 +111,11 @@ POST   /api/v4/oauth/outgoing_connections/validate | perm:manage_outgoing_oauth_
 DELETE /api/v4/oauth/outgoing_connections/{outgoing_oauth_connection_id} | perm:manage_outgoing_oauth_connections off:ServiceSettings.EnableOutgoingOAuthConnections:501:api.context.outgoing_oauth_connection.not_available.configuration_disabled | 501 api.license.upgrade_needed.app_error
 GET    /api/v4/oauth/outgoing_connections/{outgoing_oauth_connection_id} | perm:manage_outgoing_oauth_connections off:ServiceSettings.EnableOutgoingOAuthConnections:501:api.context.outgoing_oauth_connection.not_available.configuration_disabled | 501 api.license.upgrade_needed.app_error
 PUT    /api/v4/oauth/outgoing_connections/{outgoing_oauth_connection_id} | perm:manage_outgoing_oauth_connections off:ServiceSettings.EnableOutgoingOAuthConnections:501:api.context.outgoing_oauth_connection.not_available.configuration_disabled | 501 api.license.upgrade_needed.app_error
-GET    /api/v4/plugins | off:PluginSettings.Enable:501:app.plugin.disabled.app_error perm:sysconsole_read_plugins | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
 POST   /api/v4/plugins |  | 501 app.plugin.upload_disabled.app_error | Plugins and/or plugin uploads have been disabled.
 POST   /api/v4/plugins/install_from_url |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
 GET    /api/v4/plugins/marketplace |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
 POST   /api/v4/plugins/marketplace |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
-GET    /api/v4/plugins/statuses | off:PluginSettings.Enable:501:app.plugin.disabled.app_error perm:sysconsole_read_plugins | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
-GET    /api/v4/plugins/webapp | anon off:PluginSettings.Enable:501:app.plugin.disabled.app_error | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
 DELETE /api/v4/plugins/{plugin_id} |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
-POST   /api/v4/plugins/{plugin_id}/disable |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
-POST   /api/v4/plugins/{plugin_id}/enable |  | 501 app.plugin.disabled.app_error | Plugins have been disabled. Please check your logs for details.
 GET    /api/v4/recaps |  | 501 api.recap.disabled.app_error | This feature is not enabled.
 POST   /api/v4/recaps |  | 501 api.recap.disabled.app_error | This feature is not enabled.
 GET    /api/v4/recaps/limit_status |  | 501 api.recap.disabled.app_error | This feature is not enabled.

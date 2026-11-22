@@ -157,7 +157,8 @@ fn expand(item: &mut ItemStruct, table: Option<String>) -> syn::Result<proc_macr
         let insert = format!("INSERT INTO {t} ({}) VALUES ({})", cols.join(", "), params.join(", "));
         // UPDATE binds the columns in the same order as INSERT, so `id` must come first.
         let update = if cols.first() == Some(&"id") {
-            let sets: Vec<String> = cols.iter().enumerate().skip(1).map(|(i, c)| format!("{c} = {}", param(i))).collect();
+            let sets: Vec<String> =
+                cols.iter().enumerate().skip(1).map(|(i, c)| format!("{c} = {}", param(i))).collect();
             format!("UPDATE {t} SET {} WHERE id = $1", sets.join(", "))
         } else {
             String::new()

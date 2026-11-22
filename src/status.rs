@@ -16,8 +16,8 @@ use serde_json::{Value, json};
 use crate::app::{ApiResult, App, AppError, Auth, Body, State, is_valid_id, now_ms};
 use crate::db::Table;
 use crate::hub::Broadcast;
-use crate::model::status::{self, AWAY, DND, OFFLINE, ONLINE, OUT_OF_OFFICE};
 use crate::model::Status;
+use crate::model::status::{self, AWAY, DND, OFFLINE, ONLINE, OUT_OF_OFFICE};
 
 pub fn routes() -> Router<State> {
     Router::new()
@@ -65,7 +65,8 @@ impl App {
         }
         if !missing.is_empty() {
             let sql = format!("{} WHERE userid = ANY($1)", Status::SELECT);
-            let found: Vec<Status> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&missing).fetch_all(&self.db).await?;
+            let found: Vec<Status> =
+                sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(&missing).fetch_all(&self.db).await?;
             for s in &found {
                 self.caches.status.put(s.user_id.clone(), s.clone());
             }
@@ -317,9 +318,10 @@ async fn get_status(St(app): St<State>, Auth(s): Auth, Path(user_id): Path<Strin
         return Err(AppError::invalid_url_param("user_id"));
     }
     let st = app.statuses(std::slice::from_ref(&user_id)).await?;
-    st.into_iter().next().map(Json).ok_or_else(|| {
-        AppError::not_found("app.status.get.missing.app_error", "Unable to find the status entry.")
-    })
+    st.into_iter()
+        .next()
+        .map(Json)
+        .ok_or_else(|| AppError::not_found("app.status.get.missing.app_error", "Unable to find the status entry."))
 }
 
 #[derive(Deserialize, Default)]
